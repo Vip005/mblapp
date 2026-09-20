@@ -1,0 +1,45 @@
+// import { Platform } from 'react-native';
+
+// /**
+//  * Mobile API configuration.
+//  *
+//  * Can be overridden with EXPO_PUBLIC_API_URL in .env.
+//  * For physical devices on local network, set DEV_LAN_IP or EXPO_PUBLIC_API_URL.
+//  */
+// const DEV_LAN_IP = ''; // e.g. '192.168.1.100'
+
+// const getBaseUrl = (): string => {
+//   if (process.env.EXPO_PUBLIC_API_URL) {
+//     return process.env.EXPO_PUBLIC_API_URL;
+//   }
+//   if (DEV_LAN_IP) {
+//     return `http://${DEV_LAN_IP}:5000`;
+//   }
+//   return Platform.select({
+//     android: 'http://10.0.2.2:5000',
+//     ios: 'http://localhost:5000',
+//     default: 'http://localhost:5000',
+//   })!;
+// };
+
+// export const API_CONFIG = {
+//   BASE_URL: getBaseUrl(),
+//   DEFAULT_STORE_ID: 4,
+//   TIMEOUT_MS: 15000,
+//   DEMO_PHONE: __DEV__ ? '9876543210' : '',
+//   DEMO_OTP: __DEV__ ? '123456' : '',
+// };
+
+
+const API_BASE_URL = 
+// 'http://localhost:5000';
+  'https://greenmartapi-aqfedue2dte2dccy.malaysiawest-01.azurewebsites.net';
+
+export const API_CONFIG = {
+  BASE_URL: API_BASE_URL,
+  TIMEOUT_MS: 15000,
+};
+
+export const getBaseUrl = (): string => {
+  return API_BASE_URL;
+};

@@ -1,0 +1,173 @@
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  TouchableOpacity,
+  Image,
+  useWindowDimensions,
+} from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Category, RootStackParamList } from '../../types';
+import { useTheme } from '../../hooks/useTheme';
+import { useStore } from '../../hooks/useStore';
+import { AppHeader } from '../../components/common/AppHeader';
+import { LoadingState } from '../../components/feedback/LoadingState';
+import { EmptyState } from '../../components/feedback/EmptyState';
+import { categoryService } from '../../services/api/categoryService';
+
+export const CategoryScreen: React.FC = () => {
+  const { theme } = useTheme();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const { width: screenWidth } = useWindowDimensions();
+  const cardWidth = (screenWidth - 44) / 2;
+  const { selectedStoreId, selectedStore } = useStore();
+
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchCategories = async () => {
+      if (!selectedStoreId) {
+        setCategories([]);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        const list = await categoryService.getCategories(selectedStoreId);
+        setCategories(list);
+      } catch (e) {
+        console.warn('[CategoryScreen] Failed to load categories:', e);
+        setCategories([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchCategories();
+  }, [selectedStoreId]);
+
+  const handleSelectCategory = (cat: Category) => {
+    navigation.navigate('ProductListing', {
+      categoryId: cat.id,
+      title: cat.name,
+    });
+  };
+
+  if (loading) {
+    return <LoadingState message="Loading grocery aisles..." />;
+  }
+
+  return (
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      <AppHeader
+        title="All Categories"
+        subtitle={selectedStore ? `${selectedStore.name}` : undefined}
+        showBack={false}
+      />
+
+      {categories.length === 0 ? (
+        <EmptyState
+          iconName="grid-outline"
+          title="No Categories Available"
+          description={`No grocery categories are listed for ${selectedStore?.name || 'this store'}. You can switch to another nearby store.`}
+          buttonLabel="Switch Store"
+          onButtonPress={() => navigation.navigate('StoreSelection')}
+        />
+      ) : (
+        <FlatList
+          data={categories}
+          keyExtractor={(item) => item.id}
+          numColumns={2}
+          contentContainerStyle={styles.list}
+          showsVerticalScrollIndicator={false}
+          renderItem={({ item }) => (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => handleSelectCategory(item)}
+            style={[
+              styles.card,
+              {
+                width: cardWidth,
+                backgroundColor: theme.colors.card,
+                borderColor: theme.colors.borderLight,
+                borderRadius: theme.borderRadius.xl,
+                ...theme.shadows.sm,
+              },
+            ]}
+          >
+            <View style={[styles.imageContainer, { backgroundColor: item.color || '#F1F5F9' }]}>
+              <Image source={{ uri: item.image }} style={styles.image} resizeMode="cover" />
+            </View>
+
+            <View style={styles.infoBox}>
+              <Text
+                numberOfLines={1}
+                style={[
+                  styles.name,
+                  {
+                    color: theme.colors.textPrimary,
+                    fontSize: theme.typography.size.sm,
+                    fontWeight: theme.typography.weight.bold,
+                  },
+                ]}
+              >
+                {item.name}
+              </Text>
+              <Text
+                style={[
+                  styles.count,
+                  {
+                    color: theme.colors.primary,
+                    fontSize: theme.typography.size.xs,
+                    fontWeight: theme.typography.weight.medium,
+                  },
+                ]}
+              >
+                {item.itemCount} items
+              </Text>
+            </View>
+          </TouchableOpacity>
+        )}
+      />
+      )}
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  list: {
+    padding: 16,
+    gap: 12,
+  },
+  card: {
+    marginHorizontal: 3,
+    marginBottom: 12,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  imageContainer: {
+    width: '100%',
+    height: 110,
+    overflow: 'hidden',
+  },
+  image: {
+    width: '100%',
+    height: '100%',
+  },
+  infoBox: {
+    padding: 12,
+  },
+  name: {
+    letterSpacing: -0.2,
+  },
+  count: {
+    marginTop: 4,
+  },
+});
