@@ -18,6 +18,7 @@ import { useTheme } from '../../hooks/useTheme';
 import { useAuth } from '../../hooks/useAuth';
 import { AppButton } from '../../components/common/AppButton';
 import { isValidPhone } from '../../utils/validators';
+import { IS_TESTING_ENVIRONMENT } from '../../services/api/config';
 
 export const LoginScreen: React.FC = () => {
   const { theme } = useTheme();
@@ -54,7 +55,8 @@ export const LoginScreen: React.FC = () => {
 
     try {
       const res = await login(phone);
-      navigation.navigate('Otp', { phone, devOtp: res?.otp });
+      const devOtp = IS_TESTING_ENVIRONMENT ? res?.otp : undefined;
+      navigation.navigate('Otp', { phone, devOtp });
     } catch (err: any) {
       setError(err.message || 'Login failed. Please try again.');
     } finally {
@@ -63,7 +65,7 @@ export const LoginScreen: React.FC = () => {
   };
 
   const handleFillDemo = () => {
-    if (__DEV__) {
+    if (IS_TESTING_ENVIRONMENT) {
       setPhone('9876543210');
       setError('');
     }
@@ -114,32 +116,12 @@ export const LoginScreen: React.FC = () => {
             <Ionicons name="basket" size={36} color="#FFFFFF" />
           </View>
 
-          <View style={[styles.deliveryPill, { backgroundColor: theme.colors.primaryLight }]}>
-            <Ionicons name="flash" size={14} color={theme.colors.primaryDark} />
-            <Text style={[styles.deliveryPillText, { color: theme.colors.primaryDarker }]}>
-              10-15 Min Delivery
-            </Text>
-          </View>
-
           <Text style={[styles.heroHeadline, { color: theme.colors.textPrimary }]}>
-            Groceries Delivered{'\n'}in Minutes
+            Freshness Starts Here
           </Text>
           <Text style={[styles.heroSubtitle, { color: theme.colors.textSecondary }]}>
-            Farm-fresh fruits, vegetables, dairy & daily kitchen essentials at your doorstep.
+            Your everyday groceries, made simple.
           </Text>
-
-          {/* Quick Commerce Feature Tags */}
-          <View style={styles.featureRow}>
-            <View style={[styles.featureTag, { backgroundColor: theme.colors.card, borderColor: theme.colors.borderLight }]}>
-              <Text style={styles.featureTagText}>⚡ Express</Text>
-            </View>
-            <View style={[styles.featureTag, { backgroundColor: theme.colors.card, borderColor: theme.colors.borderLight }]}>
-              <Text style={styles.featureTagText}>🥦 Farm Fresh</Text>
-            </View>
-            <View style={[styles.featureTag, { backgroundColor: theme.colors.card, borderColor: theme.colors.borderLight }]}>
-              <Text style={styles.featureTagText}>🏷️ Best Prices</Text>
-            </View>
-          </View>
         </View>
 
         {/* Modern Authentication Card */}

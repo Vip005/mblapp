@@ -19,6 +19,7 @@ import { useWishlist } from '../../hooks/useWishlist';
 import { PriceDisplay } from '../common/PriceDisplay';
 import { RatingStars } from '../common/RatingStars';
 import { QuantitySelector } from './QuantitySelector';
+import { SafeImage } from '../common/SafeImage';
 
 export type ProductCardVariant = 'grid' | 'horizontal' | 'list';
 
@@ -27,8 +28,6 @@ interface ProductCardProps {
   variant?: ProductCardVariant;
   style?: ViewStyle;
 }
-
-const FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&auto=format&fit=crop&q=80';
 
 export const ProductCard: React.FC<ProductCardProps> = ({
   product,
@@ -42,7 +41,18 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
   const [imgError, setImgError] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
-  const activeVariant: ProductVariant = product.variants[0];
+  const activeVariant: ProductVariant =
+    product.variants && product.variants.length > 0
+      ? product.variants[0]
+      : {
+          id: '1',
+          name: 'Standard',
+          unit: '1 unit',
+          price: product.sellingPrice,
+          originalPrice: product.originalPrice,
+          stock: product.stock,
+          isAvailable: product.isAvailable,
+        };
   const itemId = `${product.id}_${activeVariant.id}`;
   const isPending = isAdding || isItemPending(itemId);
 
@@ -53,9 +63,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       ? !activeVariant.isAvailable || activeVariant.stock <= 0
       : product.stock <= 0);
 
-  // Find if this product+variant is currently in cart
+  // Find if this product+variant is currently in cart (string-safe ID comparison)
   const cartItem = items.find(
-    (i) => i.productId === product.id && i.variantId === activeVariant.id
+    (i) =>
+      String(i.productId) === String(product.id) &&
+      String(i.variantId) === String(activeVariant.id)
   );
   const quantity = cartItem ? cartItem.quantity : 0;
   const isWished = isInWishlist(product.id);
@@ -129,6 +141,30 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       />
     </TouchableOpacity>
   );
+
+  const renderCardImage = (imgStyle: any, customRadius?: any) => {
+    return (
+      <SafeImage
+        uri={product.image}
+        style={[imgStyle, customRadius]}
+        resizeMode="cover"
+        fallbackIcon="image-outline"
+        fallbackIconSize={24}
+        placeholderStyle={[styles.placeholderContainer, customRadius]}
+      />
+    );
+  };
+
+  const renderOutOfStockBadge = () => {
+    if (!isOutOfStock) return null;
+    return (
+      <View style={styles.outOfStockOverlay} pointerEvents="none">
+        <View style={styles.outOfStockBadge}>
+          <Text style={styles.outOfStockBadgeText}>OUT OF STOCK</Text>
+        </View>
+      </View>
+    );
+  };
 
   const renderCartAction = () => {
     if (isOutOfStock) {
@@ -243,13 +279,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         ]}
       >
         <View style={styles.listImageWrapper}>
-          <Image
-            source={{ uri: imgError ? FALLBACK_IMAGE : product.image }}
-            onError={() => setImgError(true)}
-            style={[styles.listImage, { borderRadius: theme.borderRadius.md }]}
-            resizeMode="cover"
-          />
+          {renderCardImage(styles.listImage, { borderRadius: theme.borderRadius.md })}
           {renderWishlistButton()}
+          {renderOutOfStockBadge()}
         </View>
 
         <View style={styles.listContent}>
@@ -318,12 +350,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         ]}
       >
         <View style={styles.imageWrapper}>
-          <Image
-            source={{ uri: imgError ? FALLBACK_IMAGE : product.image }}
-            onError={() => setImgError(true)}
-            style={[styles.horizontalImage, { borderRadius: theme.borderRadius.md }]}
-            resizeMode="cover"
-          />
+          {renderCardImage(styles.horizontalImage, { borderRadius: theme.borderRadius.md })}
           {renderWishlistButton()}
           {product.discount > 0 && (
             <View
@@ -337,6 +364,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               </Text>
             </View>
           )}
+          {renderOutOfStockBadge()}
         </View>
 
         <View style={styles.infoWrapper}>
@@ -402,12 +430,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       ]}
     >
       <View style={styles.gridImageWrapper}>
-        <Image
-          source={{ uri: imgError ? FALLBACK_IMAGE : product.image }}
-          onError={() => setImgError(true)}
-          style={[styles.gridImage, { borderTopLeftRadius: theme.borderRadius.lg, borderTopRightRadius: theme.borderRadius.lg }]}
-          resizeMode="cover"
-        />
+        {renderCardImage(styles.gridImage, { borderTopLeftRadius: theme.borderRadius.lg, borderTopRightRadius: theme.borderRadius.lg })}
         {renderWishlistButton()}
         {product.discount > 0 && (
           <View
@@ -421,6 +444,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             </Text>
           </View>
         )}
+        {renderOutOfStockBadge()}
       </View>
 
       <View style={styles.gridContent}>
@@ -620,5 +644,35 @@ const styles = StyleSheet.create({
   addBtnText: {
     marginLeft: 2,
     letterSpacing: 0.5,
+  },
+  outOfStockOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  outOfStockBadge: {
+    backgroundColor: 'rgba(220, 38, 38, 0.92)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  outOfStockBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+  },
+  placeholderContainer: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
   },
 });

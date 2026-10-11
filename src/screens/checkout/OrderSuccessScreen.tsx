@@ -80,12 +80,12 @@ export const OrderSuccessScreen: React.FC = () => {
             </Text>
           </View>
 
-          <View style={styles.metaRow}>
+          {/* <View style={styles.metaRow}>
             <Text style={[styles.metaLabel, { color: theme.colors.textMuted }]}>Estimated Delivery</Text>
             <Text style={[styles.metaVal, { color: theme.colors.primaryDark }]}>
               {order?.estimatedDelivery || 'Today within 2 hours'}
             </Text>
-          </View>
+          </View> */}
 
           {order && (
             <View style={styles.metaRow}>

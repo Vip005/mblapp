@@ -15,6 +15,12 @@ import { RootStackParamList } from '../../types';
 import { useTheme } from '../../hooks/useTheme';
 import { useAuth } from '../../hooks/useAuth';
 import { useStore } from '../../hooks/useStore';
+import { useOrders } from '../../hooks/useOrders';
+import { useCart } from '../../hooks/useCart';
+import { useWishlist } from '../../hooks/useWishlist';
+import { useAddress } from '../../hooks/useAddress';
+import { useNotifications } from '../../hooks/useNotifications';
+import { orderService } from '../../services/api/orderService';
 import { AppHeader } from '../../components/common/AppHeader';
 import { ConfirmationModal } from '../../components/modals/ConfirmationModal';
 import { ToastMessage } from '../../components/feedback/ToastMessage';
@@ -22,8 +28,13 @@ import { ToastMessage } from '../../components/feedback/ToastMessage';
 export const SettingsScreen: React.FC = () => {
   const { theme, isDark, toggleTheme } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   const { clearSelectedStore } = useStore();
+  const { clearOrders } = useOrders();
+  const { clearCart } = useCart();
+  const { clearWishlist } = useWishlist();
+  const { clearAddresses } = useAddress();
+  const { clearNotifications } = useNotifications();
 
   const [pushEnabled, setPushEnabled] = useState(true);
   const [promosEnabled, setPromosEnabled] = useState(true);
@@ -63,6 +74,12 @@ export const SettingsScreen: React.FC = () => {
 
   const handleLogout = async () => {
     setLogoutModalVisible(false);
+    clearOrders();
+    clearCart();
+    clearWishlist();
+    clearAddresses();
+    clearNotifications();
+    await orderService.clearOrdersCache(user?.id);
     await logout();
     await clearSelectedStore();
     navigation.reset({

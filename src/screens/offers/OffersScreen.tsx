@@ -20,6 +20,22 @@ import { LoadingState } from '../../components/feedback/LoadingState';
 import { EmptyState } from '../../components/feedback/EmptyState';
 import { couponService } from '../../services/api/couponService';
 import { offerService } from '../../services/api/offerService';
+import { isValidImageUri } from '../../components/common/SafeImage';
+
+const formatOfferDate = (dateStr?: string): string => {
+  if (!dateStr) return '';
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '';
+    return `Valid till ${d.toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    })}`;
+  } catch {
+    return '';
+  }
+};
 
 export const OffersScreen: React.FC = () => {
   const { theme } = useTheme();
@@ -63,13 +79,19 @@ export const OffersScreen: React.FC = () => {
   };
 
   const handleOfferPress = (offer: Offer) => {
-    if (offer.categoryId) {
+    if (offer.productId) {
+      navigation.navigate('ProductDetails', { productId: offer.productId });
+    } else if (offer.categoryId) {
       navigation.navigate('ProductListing', {
         categoryId: offer.categoryId,
         title: offer.title,
+        offerId: offer.id,
       });
     } else {
-      navigation.navigate('ProductListing', { title: offer.title });
+      navigation.navigate('ProductListing', {
+        title: offer.title,
+        offerId: offer.id,
+      });
     }
   };
 
@@ -153,9 +175,20 @@ export const OffersScreen: React.FC = () => {
                 { backgroundColor: theme.colors.primaryDarker, borderRadius: theme.borderRadius.xl },
               ]}
             >
-              <Text style={styles.heroBadge}>SPECIAL DEAL</Text>
+              <View style={styles.badgeWrapper}>
+                <View style={[styles.discountPill, { backgroundColor: theme.colors.secondary }]}>
+                  <Ionicons name="pricetag" size={12} color={theme.colors.white} />
+                  <Text style={styles.discountPillText}>
+                    {heroOffer.discountPercent
+                      ? `${heroOffer.discountPercent}% OFF`
+                      : heroOffer.discountValue
+                      ? `₹${heroOffer.discountValue} OFF`
+                      : 'SPECIAL DEAL'}
+                  </Text>
+                </View>
+              </View>
               <Text style={styles.heroTitle}>{heroOffer.title}</Text>
-              <Text style={styles.heroSub}>{heroOffer.description}</Text>
+              <Text style={styles.heroSub}>{heroOffer.offerMessage || heroOffer.description}</Text>
               <TouchableOpacity
                 activeOpacity={0.8}
                 onPress={() => handleOfferPress(heroOffer)}
@@ -260,65 +293,116 @@ export const OffersScreen: React.FC = () => {
                 Featured Deals & Combos ({offers.length})
               </Text>
 
-              {offers.map((offer) => (
-                <TouchableOpacity
-                  key={offer.id}
-                  activeOpacity={0.85}
-                  onPress={() => handleOfferPress(offer)}
-                  style={[
-                    styles.offerCard,
-                    {
-                      backgroundColor: theme.colors.card,
-                      borderColor: theme.colors.borderLight,
-                      borderRadius: theme.borderRadius.lg,
-                      ...theme.shadows.sm,
-                    },
-                  ]}
-                >
-                  {offer.image && (
-                    <Image source={{ uri: offer.image }} style={styles.offerImage} resizeMode="cover" />
-                  )}
-                  <View style={styles.offerContent}>
-                    <View style={styles.offerBadgeRow}>
-                      <View style={[styles.dealBadge, { backgroundColor: theme.colors.secondaryLight }]}>
-                        <Text style={[styles.dealBadgeText, { color: '#92400E' }]}>
-                          {offer.type.toUpperCase()}
+              {offers.map((offer) => {
+                let discountBadge = '';
+                if (offer.discountPercent && offer.discountPercent > 0) {
+                  discountBadge = `${offer.discountPercent}% OFF`;
+                } else if (offer.discountValue && offer.discountValue > 0) {
+                  discountBadge = `₹${offer.discountValue} OFF`;
+                } else {
+                  discountBadge = 'SPECIAL DEAL';
+                }
+
+                let targetLabel = '';
+                if (offer.categories && offer.categories.length > 0) {
+                  targetLabel = offer.categories.map((c) => c.name).join(', ');
+                } else if (offer.categoryName) {
+                  targetLabel = offer.categoryName;
+                } else if (offer.productName) {
+                  targetLabel = offer.productName;
+                } else if (offer.offerScope === 'ALL_STORES') {
+                  targetLabel = 'All Store Products';
+                }
+
+                return (
+                  <TouchableOpacity
+                    key={offer.id}
+                    activeOpacity={0.85}
+                    onPress={() => handleOfferPress(offer)}
+                    style={[
+                      styles.offerCard,
+                      {
+                        backgroundColor: theme.colors.card,
+                        borderColor: theme.colors.borderLight,
+                        borderRadius: theme.borderRadius.lg,
+                        ...theme.shadows.sm,
+                      },
+                    ]}
+                  >
+                    {isValidImageUri(offer.image) ? (
+                      <Image source={{ uri: offer.image!.trim() }} style={styles.offerImage} resizeMode="cover" />
+                    ) : (
+                      <View style={[styles.offerBannerHeader, { backgroundColor: theme.colors.primaryDarker }]}>
+                        <View style={styles.badgeWrapper}>
+                          <View style={[styles.discountPill, { backgroundColor: theme.colors.secondary }]}>
+                            <Ionicons name="pricetag" size={12} color={theme.colors.white} />
+                            <Text style={styles.discountPillText}>{discountBadge}</Text>
+                          </View>
+                        </View>
+                        {offer.validUntil ? (
+                          <Text style={styles.validUntilHeaderText}>{formatOfferDate(offer.validUntil)}</Text>
+                        ) : null}
+                      </View>
+                    )}
+
+                    <View style={styles.offerContent}>
+                      {isValidImageUri(offer.image) && (
+                        <View style={styles.offerBadgeRow}>
+                          <View style={[styles.dealBadge, { backgroundColor: theme.colors.secondaryLight }]}>
+                            <Text style={[styles.dealBadgeText, { color: '#92400E' }]}>
+                              {discountBadge}
+                            </Text>
+                          </View>
+                          {offer.validUntil && (
+                            <Text style={[styles.validUntilText, { color: theme.colors.textMuted }]}>
+                              {formatOfferDate(offer.validUntil)}
+                            </Text>
+                          )}
+                        </View>
+                      )}
+
+                      <Text
+                        style={[
+                          styles.offerTitle,
+                          {
+                            color: theme.colors.textPrimary,
+                            fontSize: theme.typography.size.md,
+                            fontWeight: theme.typography.weight.bold,
+                          },
+                        ]}
+                      >
+                        {offer.title}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.offerDesc,
+                          { color: theme.colors.textSecondary, fontSize: theme.typography.size.xs },
+                        ]}
+                      >
+                        {offer.offerMessage || offer.description}
+                      </Text>
+
+                      {targetLabel ? (
+                        <View style={styles.offerScopeRow}>
+                          <Ionicons name="apps-outline" size={13} color={theme.colors.textMuted} />
+                          <Text
+                            numberOfLines={1}
+                            style={[styles.offerScopeText, { color: theme.colors.textSecondary }]}
+                          >
+                            Applicable on: {targetLabel}
+                          </Text>
+                        </View>
+                      ) : null}
+
+                      <View style={styles.shopNowRow}>
+                        <Text style={[styles.shopNowText, { color: theme.colors.primary }]}>
+                          Shop Applicable Items →
                         </Text>
                       </View>
-                      <Text style={[styles.validUntilText, { color: theme.colors.textMuted }]}>
-                        {offer.validUntil}
-                      </Text>
                     </View>
-
-                    <Text
-                      style={[
-                        styles.offerTitle,
-                        {
-                          color: theme.colors.textPrimary,
-                          fontSize: theme.typography.size.md,
-                          fontWeight: theme.typography.weight.bold,
-                        },
-                      ]}
-                    >
-                      {offer.title}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.offerDesc,
-                        { color: theme.colors.textSecondary, fontSize: theme.typography.size.xs },
-                      ]}
-                    >
-                      {offer.description}
-                    </Text>
-
-                    <View style={styles.shopNowRow}>
-                      <Text style={[styles.shopNowText, { color: theme.colors.primary }]}>
-                        Shop Now →
-                      </Text>
-                    </View>
-                  </View>
-                </TouchableOpacity>
-              ))}
+                  </TouchableOpacity>
+                );
+              })}
             </>
           )}
 
@@ -467,5 +551,45 @@ const styles = StyleSheet.create({
   shopNowText: {
     fontSize: 13,
     fontWeight: '700',
+  },
+  offerBannerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  badgeWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  discountPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    gap: 4,
+  },
+  discountPillText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  validUntilHeaderText: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontWeight: '500',
+  },
+  offerScopeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 8,
+  },
+  offerScopeText: {
+    fontSize: 11,
+    fontWeight: '500',
   },
 });

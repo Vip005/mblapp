@@ -1,6 +1,7 @@
-import React, { createContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { Order, OrderStatus, OrderStatusStep } from '../types';
 import { orderService } from '../services/api/orderService';
+import { useAuth } from '../hooks/useAuth';
 
 interface OrderContextType {
   orders: Order[];
@@ -11,44 +12,62 @@ interface OrderContextType {
   getOrderById: (id: string) => Order | undefined;
   cancelOrder: (id: string) => Promise<Order>;
   refreshOrders: () => Promise<void>;
+  clearOrders: () => void;
   updateOrderStatus: (orderId: string | number, status: OrderStatus, trackingSteps?: OrderStatusStep[]) => void;
+  updateOrder: (order: Order) => void;
 }
 
 export const OrderContext = createContext<OrderContextType>({
   orders: [],
-  isLoading: true,
+  isLoading: false,
   placeOrder: async () => ({} as Order),
   getOrderById: () => undefined,
   cancelOrder: async () => ({} as Order),
   refreshOrders: async () => {},
+  clearOrders: () => {},
   updateOrderStatus: () => {},
+  updateOrder: () => {},
 });
 
 export const OrderProvider = ({ children }: { children: ReactNode }) => {
+  const { user, isLoggedIn } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  const loadOrders = async () => {
+  const clearOrders = useCallback(() => {
+    setOrders([]);
+  }, []);
+
+  const loadOrders = useCallback(async () => {
+    if (!isLoggedIn || !user?.id) {
+      setOrders([]);
+      setIsLoading(false);
+      return;
+    }
+
     try {
       setIsLoading(true);
-      const list = await orderService.getOrders();
+      const list = await orderService.getOrders(user.id);
       setOrders(list);
-    } catch (e) {
-      console.warn('Failed to load orders:', e);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn('Failed to load orders:', msg);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [isLoggedIn, user?.id]);
 
   useEffect(() => {
     loadOrders();
-  }, []);
+  }, [loadOrders]);
 
   const placeOrder = async (
     details: Omit<Order, 'id' | 'orderNumber' | 'date' | 'status' | 'trackingSteps' | 'estimatedDelivery'>
   ) => {
     const newOrder = await orderService.createOrder(details);
-    setOrders((prev) => [newOrder, ...prev]);
+    if (!user?.id || String(newOrder.customerId) === String(user.id)) {
+      setOrders((prev) => [newOrder, ...prev]);
+    }
     return newOrder;
   };
 
@@ -82,6 +101,14 @@ export const OrderProvider = ({ children }: { children: ReactNode }) => {
     );
   };
 
+  const updateOrder = (updatedOrder: Order) => {
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === updatedOrder.id || o.orderNumber === updatedOrder.orderNumber ? updatedOrder : o
+      )
+    );
+  };
+
   return (
     <OrderContext.Provider
       value={{
@@ -91,7 +118,9 @@ export const OrderProvider = ({ children }: { children: ReactNode }) => {
         getOrderById,
         cancelOrder,
         refreshOrders: loadOrders,
+        clearOrders,
         updateOrderStatus,
+        updateOrder,
       }}
     >
       {children}

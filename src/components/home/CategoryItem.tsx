@@ -1,21 +1,20 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
+import React from 'react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Category, RootStackParamList } from '../../types';
 import { useTheme } from '../../hooks/useTheme';
+import { SafeImage } from '../common/SafeImage';
 
 interface CategoryItemProps {
   category: Category;
   size?: 'sm' | 'md' | 'lg';
 }
 
-const FALLBACK_CAT_IMAGE = 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&auto=format&fit=crop&q=80';
-
 export const CategoryItem: React.FC<CategoryItemProps> = ({ category, size = 'md' }) => {
   const { theme } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const [imgError, setImgError] = useState(false);
 
   const getDimension = () => {
     switch (size) {
@@ -58,11 +57,12 @@ export const CategoryItem: React.FC<CategoryItemProps> = ({ category, size = 'md
           },
         ]}
       >
-        <Image
-          source={{ uri: imgError ? FALLBACK_CAT_IMAGE : category.image }}
-          onError={() => setImgError(true)}
+        <SafeImage
+          uri={category.image}
           style={[styles.image, { width: dim - 12, height: dim - 12, borderRadius: (dim - 12) / 2 }]}
           resizeMode="cover"
+          fallbackIcon="grid-outline"
+          fallbackIconSize={dim * 0.4}
         />
       </View>
       <Text

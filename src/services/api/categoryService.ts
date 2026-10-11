@@ -1,9 +1,7 @@
 import { apiClient } from './apiClient';
-import { API_CONFIG } from './config';
 import { storeService } from './storeService';
 import { Category } from '../../types';
 import { mapCategory } from './adapters';
-import { categories as mockCategories } from '../../data/categories';
 
 export const categoryService = {
   async getCategories(storeId?: number): Promise<Category[]> {

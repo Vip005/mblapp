@@ -11,11 +11,13 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { RootStackParamList, Store } from '../../types';
+import { RootStackParamList, Store, User } from '../../types';
 import { useTheme } from '../../hooks/useTheme';
+import { useAuth } from '../../hooks/useAuth';
 import { useStore } from '../../hooks/useStore';
 import { useAddress } from '../../hooks/useAddress';
 import { useCart } from '../../hooks/useCart';
+import { storage, STORAGE_KEYS } from '../../utils/storage';
 import { AppButton } from '../../components/common/AppButton';
 import { ConfirmationModal } from '../../components/modals/ConfirmationModal';
 import { findMatchingStores, normalizePincode } from '../../utils/storeMatcher';
@@ -25,6 +27,7 @@ export const StoreSelectionScreen: React.FC = () => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const route = useRoute<RouteProp<RootStackParamList, 'StoreSelection'>>();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const { stores, isLoading: storesLoading, selectStore } = useStore();
   const { selectedAddress, addresses } = useAddress();
   const { items, cartStoreId, clearCart } = useCart();
@@ -63,7 +66,12 @@ export const StoreSelectionScreen: React.FC = () => {
     setSubmitting(true);
     try {
       await selectStore(store);
-      navigation.reset({
+      const customerId = user?.id || (await storage.get<User | null>(STORAGE_KEYS.USER, null))?.id;
+      if (customerId) {
+        await storage.set(STORAGE_KEYS.customerOnboarding(customerId), true);
+      }
+      const rootNav = navigation.getParent<NativeStackNavigationProp<RootStackParamList>>() || navigation;
+      rootNav.reset({
         index: 0,
         routes: [{ name: 'Main' }],
       });

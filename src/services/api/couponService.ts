@@ -1,7 +1,6 @@
 import { apiClient } from './apiClient';
 import { Coupon } from '../../types';
 import { mapOfferToCoupon } from './adapters';
-import { coupons as mockCoupons } from '../../data/coupons';
 import { storeService } from './storeService';
 
 export const couponService = {
@@ -19,21 +18,14 @@ export const couponService = {
           .filter((o: any) => o.isActive && !o.isExpired && (o.couponCode || o.offerType === 'COUPON'))
           .map(mapOfferToCoupon);
 
-        if (backendCoupons.length > 0) {
-          return backendCoupons;
-        }
+        return backendCoupons;
       }
 
-      if (activeStoreId) {
-        return [];
-      }
+      return [];
     } catch (e: any) {
-      console.warn('[couponService.getCoupons] Backend error:', e.message);
-      if (activeStoreId) {
-        return [];
-      }
+      console.warn('[couponService.getCoupons] Backend error:', e?.message || e);
+      return [];
     }
-    return [...mockCoupons];
   },
 
   async validateCoupon(

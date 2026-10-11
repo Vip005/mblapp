@@ -6,6 +6,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Order, OrderStatus, RootStackParamList } from '../../types';
 import { useTheme } from '../../hooks/useTheme';
 import { Badge } from '../common/Badge';
+import { SafeImage } from '../common/SafeImage';
 import { formatCurrency, formatDate } from '../../utils/formatters';
 
 interface OrderCardProps {
@@ -85,14 +86,16 @@ export const OrderCard: React.FC<OrderCardProps> = ({ order }) => {
       <View style={styles.itemsPreviewRow}>
         <View style={styles.imagesRow}>
           {order.items.slice(0, 3).map((item, idx) => (
-            <Image
+            <SafeImage
               key={idx}
-              source={{ uri: item.image }}
+              uri={item.image}
               style={[
                 styles.itemThumb,
                 { borderColor: theme.colors.surface, marginLeft: idx > 0 ? -12 : 0 },
               ]}
               resizeMode="cover"
+              fallbackIcon="basket-outline"
+              fallbackIconSize={16}
             />
           ))}
           {order.items.length > 3 && (

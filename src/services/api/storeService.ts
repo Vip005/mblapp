@@ -2,13 +2,12 @@ import { apiClient } from './apiClient';
 import { API_CONFIG } from './config';
 import { Store } from '../../types';
 import { mapStore } from './adapters';
-import { initialStores } from '../../data/stores';
 import { storage, STORAGE_KEYS } from '../../utils/storage';
 
 export const storeService = {
   /**
    * Fetches all stores from GET /api/Stores.
-   * Falls back to initialStores if backend is unreachable or returns empty.
+   * Returns empty array if backend is unreachable or returns empty.
    */
   async getStores(): Promise<Store[]> {
     try {
@@ -20,10 +19,10 @@ export const storeService = {
         return mappedStores;
       }
     } catch (e: any) {
-      console.warn('[storeService.getStores] Backend error, using fallback:', e.message);
+      console.warn('[storeService.getStores] Backend error:', e.message);
     }
 
-    return [...initialStores];
+    return [];
   },
 
   /**

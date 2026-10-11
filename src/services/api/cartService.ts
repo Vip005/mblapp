@@ -32,12 +32,19 @@ const inFlightCartMasterPromises = new Map<string, Promise<BackendCartMaster | n
 
 export const cartService = {
   /**
-   * Fetch all cart master records from backend.
-   * Client-side filters by customerId and storeId due to backend scoping limitation.
+   * Fetch cart master records from backend scoped to customer and store.
    */
-  async getCartMasters(): Promise<BackendCartMaster[]> {
+  async getCartMasters(customerId?: number | string, storeId?: number | string): Promise<BackendCartMaster[]> {
     try {
-      const res = await apiClient.get<BackendCartMaster[]>('/api/CartMaster');
+      const params = new URLSearchParams();
+      if (customerId !== undefined && customerId !== null) {
+        params.append('customerId', String(customerId));
+      }
+      if (storeId !== undefined && storeId !== null) {
+        params.append('storeId', String(storeId));
+      }
+      const queryStr = params.toString() ? `?${params.toString()}` : '';
+      const res = await apiClient.get<BackendCartMaster[]>(`/api/CartMaster${queryStr}`);
       return Array.isArray(res) ? res : (res as any)?.result || [];
     } catch (e: any) {
       console.warn('[cartService.getCartMasters] Failed to fetch cart masters:', e.message);
@@ -58,7 +65,7 @@ export const cartService = {
 
     const promise = (async () => {
       try {
-        const allCarts = await this.getCartMasters();
+        const allCarts = await this.getCartMasters(customerId, storeId);
         const existing = allCarts.find((c) => Number(c.customerId) === Number(customerId) && Number(c.storeID) === Number(storeId));
         if (existing) {
           return existing;
@@ -241,14 +248,18 @@ export const cartService = {
     appliedCoupon: Coupon | null,
     cartMaster?: BackendCartMaster | null
   ): CartSummary {
-    const subtotal = items.reduce((sum, item) => sum + item.totalPrice, 0);
+    const subtotal = Number(items.reduce((sum, item) => sum + item.totalPrice, 0).toFixed(2));
 
     // Product discount from original vs selling price
-    const originalSubtotal = items.reduce((sum, item) => {
-      const origPrice = item.variant?.originalPrice || item.product?.originalPrice || item.price;
-      return sum + origPrice * item.quantity;
-    }, 0);
-    const productDiscount = Math.max(0, originalSubtotal - subtotal);
+    const originalSubtotal = Number(
+      items
+        .reduce((sum, item) => {
+          const origPrice = item.variant?.originalPrice || item.product?.originalPrice || item.price;
+          return sum + origPrice * item.quantity;
+        }, 0)
+        .toFixed(2)
+    );
+    const productDiscount = Number(Math.max(0, originalSubtotal - subtotal).toFixed(2));
 
     // Coupon discount calculation
     let couponDiscount = 0;
@@ -262,12 +273,13 @@ export const cartService = {
         couponDiscount = appliedCoupon.maxDiscount ? Math.min(disc, appliedCoupon.maxDiscount) : disc;
       }
     }
-    couponDiscount = Math.round(couponDiscount);
+    couponDiscount = Number(couponDiscount.toFixed(2));
+    const totalDiscount = Number((productDiscount + couponDiscount).toFixed(2));
 
     // Dynamic fees from backend CartMaster
-    const backendDeliveryFee = cartMaster?.deliveryFee ?? 0;
-    const backendPlatformFee = cartMaster?.platformFee ?? 0;
-    const backendTaxPercentage = cartMaster?.taxPercentage ?? 0;
+    const backendDeliveryFee = Number((cartMaster?.deliveryFee ?? 0).toFixed(2));
+    const backendPlatformFee = Number((cartMaster?.platformFee ?? 0).toFixed(2));
+    const backendTaxPercentage = Number((cartMaster?.taxPercentage ?? 0).toFixed(2));
 
     // Delivery fee (0 if empty cart or FREEDEL coupon applied)
     let deliveryCharge = backendDeliveryFee;
@@ -281,12 +293,12 @@ export const cartService = {
       platformFee = 0;
     }
 
-    // Tax based on dynamic percentage from CartMaster
-    const taxableAmount = Math.max(0, subtotal - couponDiscount);
-    const tax = subtotal === 0 ? 0 : Math.round((taxableAmount * backendTaxPercentage) / 100);
+    // Formula: Grand Total = Item Subtotal - Discount + Delivery Fee + Platform Fee + Taxes
+    const taxableAmount = Math.max(0, subtotal - totalDiscount);
+    const tax = subtotal === 0 ? 0 : Number(((taxableAmount * backendTaxPercentage) / 100).toFixed(2));
 
     // Grand total
-    const total = Math.max(0, taxableAmount + deliveryCharge + platformFee + tax);
+    const total = Number(Math.max(0, taxableAmount + deliveryCharge + platformFee + tax).toFixed(2));
 
     return {
       subtotal,

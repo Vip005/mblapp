@@ -16,6 +16,7 @@ import { useWishlist } from '../../hooks/useWishlist';
 import { useCart } from '../../hooks/useCart';
 import { AppHeader } from '../../components/common/AppHeader';
 import { AppButton } from '../../components/common/AppButton';
+import { SafeImage } from '../../components/common/SafeImage';
 import { EmptyState } from '../../components/feedback/EmptyState';
 import { ToastMessage } from '../../components/feedback/ToastMessage';
 import { ConfirmationModal } from '../../components/modals/ConfirmationModal';
@@ -101,7 +102,13 @@ export const WishlistScreen: React.FC = () => {
                   onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
                   style={styles.imageBox}
                 >
-                  <Image source={{ uri: item.image }} style={styles.image} resizeMode="cover" />
+                  <SafeImage
+                    uri={item.image}
+                    style={styles.image}
+                    resizeMode="cover"
+                    fallbackIcon="basket-outline"
+                    fallbackIconSize={24}
+                  />
                 </TouchableOpacity>
 
                 <View style={styles.infoBox}>

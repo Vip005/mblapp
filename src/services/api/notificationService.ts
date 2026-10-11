@@ -1,35 +1,46 @@
 import { Notification } from '../../types';
-import { initialNotifications } from '../../data/notifications';
 import { storage, STORAGE_KEYS } from '../../utils/storage';
 
 export const notificationService = {
-  async getNotifications(): Promise<Notification[]> {
-    const saved = await storage.get<Notification[] | null>(STORAGE_KEYS.NOTIFICATIONS, null);
+  getNotificationKey(customerId?: string | number): string {
+    return customerId ? STORAGE_KEYS.customerNotifications(customerId) : STORAGE_KEYS.NOTIFICATIONS;
+  },
+
+  async getNotifications(customerId?: string | number): Promise<Notification[]> {
+    const key = this.getNotificationKey(customerId);
+    const saved = await storage.get<Notification[] | null>(key, null);
     if (!saved) {
-      await storage.set(STORAGE_KEYS.NOTIFICATIONS, initialNotifications);
-      return [...initialNotifications];
+      return [];
     }
     return saved;
   },
 
-  async markAsRead(id: string): Promise<Notification[]> {
-    const current = await this.getNotifications();
+  async markAsRead(id: string, customerId?: string | number): Promise<Notification[]> {
+    const key = this.getNotificationKey(customerId);
+    const current = await this.getNotifications(customerId);
     const updated = current.map((n) => (n.id === id ? { ...n, isRead: true } : n));
-    await storage.set(STORAGE_KEYS.NOTIFICATIONS, updated);
+    await storage.set(key, updated);
     return updated;
   },
 
-  async markAllAsRead(): Promise<Notification[]> {
-    const current = await this.getNotifications();
+  async markAllAsRead(customerId?: string | number): Promise<Notification[]> {
+    const key = this.getNotificationKey(customerId);
+    const current = await this.getNotifications(customerId);
     const updated = current.map((n) => ({ ...n, isRead: true }));
-    await storage.set(STORAGE_KEYS.NOTIFICATIONS, updated);
+    await storage.set(key, updated);
     return updated;
   },
 
-  async deleteNotification(id: string): Promise<Notification[]> {
-    const current = await this.getNotifications();
+  async deleteNotification(id: string, customerId?: string | number): Promise<Notification[]> {
+    const key = this.getNotificationKey(customerId);
+    const current = await this.getNotifications(customerId);
     const updated = current.filter((n) => n.id !== id);
-    await storage.set(STORAGE_KEYS.NOTIFICATIONS, updated);
+    await storage.set(key, updated);
     return updated;
+  },
+
+  async clearNotifications(customerId?: string | number): Promise<void> {
+    const key = this.getNotificationKey(customerId);
+    await storage.remove(key);
   },
 };

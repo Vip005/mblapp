@@ -1,6 +1,9 @@
-export const formatCurrency = (amount: number): string => {
-  if (isNaN(amount)) return '₹0';
-  return `₹${Math.round(amount).toLocaleString('en-IN')}`;
+export const formatCurrency = (amount: number | null | undefined): string => {
+  if (amount == null || isNaN(Number(amount))) return '₹0.00';
+  return `₹${Number(amount).toLocaleString('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 };
 
 export const formatDate = (dateString: string): string => {

@@ -12,6 +12,7 @@ import { RootStackParamList, Product, FilterOptions, SortOption, Category } from
 import { useTheme } from '../../hooks/useTheme';
 import { useStore } from '../../hooks/useStore';
 import { AppHeader } from '../../components/common/AppHeader';
+import { CartBadgeButton } from '../../components/common/CartBadgeButton';
 import { SearchBar } from '../../components/common/SearchBar';
 import { ProductGrid } from '../../components/product/ProductGrid';
 import { ProductList } from '../../components/product/ProductList';
@@ -182,16 +183,26 @@ export const ProductListingScreen: React.FC = () => {
         title={title}
         subtitle={`${filteredProducts.length} items available`}
         rightAction={
-          <TouchableOpacity
-            onPress={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
-            style={[styles.toggleBtn, { backgroundColor: theme.colors.background }]}
-          >
-            <Ionicons
-              name={viewMode === 'grid' ? 'list-outline' : 'grid-outline'}
+          <View style={styles.headerRightActions}>
+            <TouchableOpacity
+              onPress={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
+              style={[styles.toggleBtn, { backgroundColor: theme.colors.background }]}
+              accessibilityRole="button"
+              accessibilityLabel={viewMode === 'grid' ? 'Switch to list view' : 'Switch to grid view'}
+            >
+              <Ionicons
+                name={viewMode === 'grid' ? 'list-outline' : 'grid-outline'}
+                size={20}
+                color={theme.colors.textPrimary}
+              />
+            </TouchableOpacity>
+
+            <CartBadgeButton
+              buttonSize={36}
               size={20}
-              color={theme.colors.textPrimary}
+              style={{ marginLeft: 8 }}
             />
-          </TouchableOpacity>
+          </View>
         }
       />
 
@@ -282,6 +293,10 @@ export const ProductListingScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  headerRightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   toggleBtn: {
     width: 36,

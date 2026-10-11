@@ -1,42 +1,41 @@
 import { apiClient } from './apiClient';
 import { Address, User } from '../../types';
 import { mapAddress, mapAddressToDto } from './adapters';
-import { initialAddresses } from '../../data/addresses';
 import { storage, STORAGE_KEYS } from '../../utils/storage';
 import { storeService } from './storeService';
 
+const getAddressStorageKey = (customerId?: string | number | null): string => {
+  return customerId ? STORAGE_KEYS.customerAddresses(customerId) : STORAGE_KEYS.ADDRESSES;
+};
+
 export const addressService = {
-  async getAddresses(): Promise<Address[]> {
+  getAddressStorageKey,
+
+  async getAddresses(targetCustomerId?: string | number | null): Promise<Address[]> {
     const user = await storage.get<User | null>(STORAGE_KEYS.USER, null);
-    const customerId = user?.id || null;
+    const customerId = targetCustomerId || user?.id || null;
+    const cacheKey = getAddressStorageKey(customerId);
+
+    if (!customerId) {
+      return [];
+    }
 
     try {
-      const res = await apiClient.get('/api/CustomerAddressMaster');
+      const res = await apiClient.get(`/api/CustomerAddressMaster?customerId=${encodeURIComponent(String(customerId))}`);
       const items = Array.isArray(res) ? res : res?.result || [];
 
-      if (customerId) {
-        // Multi-user security: filter addresses for current logged-in customer
-        const userAddresses = items
-          .filter((a: any) => String(a.customerId) === String(customerId))
-          .map(mapAddress);
+      const userAddresses = items
+        .filter((a: any) => String(a.customerId) === String(customerId))
+        .map(mapAddress);
 
-        await storage.set(STORAGE_KEYS.ADDRESSES, userAddresses);
-        return userAddresses;
-      }
+      await storage.set(cacheKey, userAddresses);
+      return userAddresses;
     } catch (e: any) {
       console.warn('[addressService.getAddresses] Backend error, using storage:', e.message);
     }
 
-    const saved = await storage.get<Address[] | null>(STORAGE_KEYS.ADDRESSES, null);
-    if (!saved) {
-      // For authenticated users, default to empty list. For guest/demo, use initialAddresses.
-      if (customerId) {
-        return [];
-      }
-      await storage.set(STORAGE_KEYS.ADDRESSES, initialAddresses);
-      return [...initialAddresses];
-    }
-    return saved;
+    const saved = await storage.get<Address[] | null>(cacheKey, null);
+    return saved || [];
   },
 
   async addAddress(data: Omit<Address, 'id'>): Promise<Address> {
@@ -64,14 +63,14 @@ export const addressService = {
       console.warn('[addressService.addAddress] Backend failed, saving locally:', e.message);
     }
 
-    const current = await this.getAddresses();
+    const current = await this.getAddresses(customerId);
     let updatedList = [...current];
     if (newAddress.isDefault) {
       updatedList = updatedList.map((a) => ({ ...a, isDefault: false }));
     }
     updatedList.unshift(newAddress);
 
-    await storage.set(STORAGE_KEYS.ADDRESSES, updatedList);
+    await storage.set(getAddressStorageKey(customerId), updatedList);
     return newAddress;
   },
 
@@ -82,7 +81,7 @@ export const addressService = {
     }
     const customerId = user.id;
 
-    const current = await this.getAddresses();
+    const current = await this.getAddresses(customerId);
     const existing = current.find((a) => a.id === id);
     if (!existing) {
       throw new Error('Address not found');
@@ -109,11 +108,14 @@ export const addressService = {
       return a;
     });
 
-    await storage.set(STORAGE_KEYS.ADDRESSES, updatedList);
+    await storage.set(getAddressStorageKey(customerId), updatedList);
     return updatedTarget;
   },
 
   async deleteAddress(id: string): Promise<boolean> {
+    const user = await storage.get<User | null>(STORAGE_KEYS.USER, null);
+    const customerId = user?.id;
+
     if (/^\d+$/.test(id)) {
       try {
         await apiClient.delete(`/api/CustomerAddressMaster/${id}`);
@@ -122,18 +124,27 @@ export const addressService = {
       }
     }
 
-    const current = await this.getAddresses();
+    const current = await this.getAddresses(customerId);
     const filtered = current.filter((a) => a.id !== id);
 
     if (filtered.length > 0 && !filtered.some((a) => a.isDefault)) {
       filtered[0].isDefault = true;
     }
 
-    await storage.set(STORAGE_KEYS.ADDRESSES, filtered);
+    if (customerId) {
+      await storage.set(getAddressStorageKey(customerId), filtered);
+    }
     return true;
   },
 
   async setDefaultAddress(id: string): Promise<Address[]> {
     return this.updateAddress(id, { isDefault: true }).then(() => this.getAddresses());
+  },
+
+  async clearAddressCache(customerId?: string | number | null): Promise<void> {
+    if (customerId) {
+      await storage.remove(getAddressStorageKey(customerId));
+    }
+    await storage.remove(STORAGE_KEYS.ADDRESSES);
   },
 };

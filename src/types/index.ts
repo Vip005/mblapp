@@ -222,12 +222,13 @@ export interface Order {
   tax: number;
   total: number;
   address: Address;
-  deliverySlot: DeliverySlot;
+  // deliverySlot: DeliverySlot;
   paymentMethod: PaymentMethodType;
   appliedCoupon?: Coupon | null;
   trackingSteps: OrderStatusStep[];
-  estimatedDelivery: string;
+  // estimatedDelivery: string;
   storeId?: number;
+  customerId?: string | number;
 }
 
 export type BannerActionType = 'CATEGORY' | 'PRODUCT' | 'BRAND' | 'OFFER' | 'NONE';
@@ -271,17 +272,92 @@ export interface Banner {
 }
 
 
+export interface OfferStoreMappingDto {
+  storeID: number;
+  storeName: string;
+}
+
+export interface OfferCategoryDto {
+  categoryID: number;
+  categoryName: string;
+}
+
+export interface OfferProductDto {
+  productID: number;
+  productName: string;
+}
+
+export interface OfferVariantDto {
+  variantID: number;
+  variantLabel: string;
+}
+
+export interface OfferMasterDto {
+  offerID: number;
+  ownerID: number;
+  ownerName?: string;
+  offerName: string;
+  offerScope: string;
+  offerType: string;
+  discountTypeID: number;
+  discountTypeName: string;
+  discountValue: number;
+  minPurchaseAmount?: number | null;
+  maxDiscountAmount?: number | null;
+  giftDescription?: string | null;
+  giftMinPurchase?: number | null;
+  couponCode?: string | null;
+  maxUsesTotal?: number | null;
+  maxUsesPerCustomer?: number | null;
+  buyQuantity?: number | null;
+  getQuantity?: number | null;
+  freeVariantID?: number | null;
+  freeVariantLabel?: string | null;
+  validFrom: string;
+  validTo: string;
+  isDayBased?: boolean;
+  applicableDays?: string | null;
+  applicableDaysReadable?: string | null;
+  isTimeBased?: boolean;
+  startTime?: string | null;
+  endTime?: string | null;
+  offerMessage?: string | null;
+  isActive: boolean;
+  isExpired: boolean;
+  createdDate?: string;
+  stores?: OfferStoreMappingDto[];
+  categories?: OfferCategoryDto[];
+  products?: OfferProductDto[];
+  variants?: OfferVariantDto[];
+  totalUsed?: number;
+}
+
 export interface Offer {
   id: string;
   title: string;
   code: string;
   description: string;
   discountPercent?: number;
+  discountValue?: number;
+  discountTypeName?: string;
   minOrder?: number;
+  maxDiscount?: number;
   image?: string;
+  offerScope?: string;
+  offerType?: string;
   categoryId?: string;
+  categoryName?: string;
+  productId?: string;
+  productName?: string;
+  validFrom?: string;
   validUntil?: string;
   type: 'coupon' | 'deal' | 'combo';
+  isActive?: boolean;
+  isExpired?: boolean;
+  applicableDaysReadable?: string;
+  offerMessage?: string;
+  categories?: { id: string; name: string }[];
+  products?: { id: string; name: string }[];
 }
 
 export interface Notification {
@@ -313,18 +389,15 @@ export type SortOption =
 // Navigation Param Lists
 export type RootStackParamList = {
   Splash: undefined;
-  Onboarding: undefined;
-  Auth: undefined;
+  Auth: NavigatorScreenParams<AuthStackParamList> | undefined;
   Main: NavigatorScreenParams<MainTabParamList> | undefined;
   ProductListing: { categoryId?: string; title?: string; query?: string; offerId?: string; brand?: string };
   ProductDetails: { productId: string };
   Search: undefined;
   Wishlist: undefined;
-  Cart: undefined;
   Checkout: undefined;
   OrderSuccess: { orderId: string };
   OrderDetails: { orderId: string };
-  Orders: undefined;
   Addresses: undefined;
   Notifications: undefined;
   Offers: undefined;
@@ -337,8 +410,10 @@ export type RootStackParamList = {
 
 export type AuthStackParamList = {
   Login: undefined;
-  Register: undefined;
   Otp: { phone: string; devOtp?: string };
+  NameUpdate: undefined;
+  PrimaryAddress: undefined;
+  StoreSelection: { customerPincode?: string } | undefined;
 };
 
 export type MainTabParamList = {

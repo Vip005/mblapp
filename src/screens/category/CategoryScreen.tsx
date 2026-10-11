@@ -14,6 +14,7 @@ import { Category, RootStackParamList } from '../../types';
 import { useTheme } from '../../hooks/useTheme';
 import { useStore } from '../../hooks/useStore';
 import { AppHeader } from '../../components/common/AppHeader';
+import { SafeImage } from '../../components/common/SafeImage';
 import { LoadingState } from '../../components/feedback/LoadingState';
 import { EmptyState } from '../../components/feedback/EmptyState';
 import { categoryService } from '../../services/api/categoryService';
@@ -100,12 +101,18 @@ export const CategoryScreen: React.FC = () => {
             ]}
           >
             <View style={[styles.imageContainer, { backgroundColor: item.color || '#F1F5F9' }]}>
-              <Image source={{ uri: item.image }} style={styles.image} resizeMode="cover" />
+              <SafeImage
+                uri={item.image}
+                style={styles.image}
+                resizeMode="cover"
+                fallbackIcon="grid-outline"
+                fallbackIconSize={28}
+              />
             </View>
 
             <View style={styles.infoBox}>
               <Text
-                numberOfLines={1}
+                numberOfLines={2}
                 style={[
                   styles.name,
                   {
@@ -116,18 +123,6 @@ export const CategoryScreen: React.FC = () => {
                 ]}
               >
                 {item.name}
-              </Text>
-              <Text
-                style={[
-                  styles.count,
-                  {
-                    color: theme.colors.primary,
-                    fontSize: theme.typography.size.xs,
-                    fontWeight: theme.typography.weight.medium,
-                  },
-                ]}
-              >
-                {item.itemCount} items
               </Text>
             </View>
           </TouchableOpacity>

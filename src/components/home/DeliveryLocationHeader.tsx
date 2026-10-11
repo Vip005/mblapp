@@ -10,6 +10,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useAddress } from '../../hooks/useAddress';
 import { useNotifications } from '../../hooks/useNotifications';
 import { useStore } from '../../hooks/useStore';
+import { isValidImageUri } from '../common/SafeImage';
 
 export const DeliveryLocationHeader: React.FC = () => {
   const { theme } = useTheme();
@@ -131,8 +132,8 @@ export const DeliveryLocationHeader: React.FC = () => {
           onPress={() => (isLoggedIn ? navigation.navigate('EditProfile') : navigation.navigate('Auth'))}
           style={[styles.avatarButton, { borderColor: theme.colors.primary }]}
         >
-          {user?.avatar ? (
-            <Image source={{ uri: user.avatar }} style={styles.avatar} />
+          {isValidImageUri(user?.avatar) ? (
+            <Image source={{ uri: user!.avatar!.trim() }} style={styles.avatar} />
           ) : (
             <View style={[styles.avatarFallback, { backgroundColor: theme.colors.primaryLight }]}>
               <Text style={[styles.avatarInitial, { color: theme.colors.primaryDark }]}>

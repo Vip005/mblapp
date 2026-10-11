@@ -35,9 +35,21 @@ const API_BASE_URL =
 // 'http://localhost:5000';
   'https://greenmartapi-aqfedue2dte2dccy.malaysiawest-01.azurewebsites.net';
 
+/**
+ * Controlled testing flag for OTP autofill & DEV conveniences.
+ * 
+ * - In local development (Expo Go / Metro dev server): __DEV__ is true.
+ * - In preview/test APK builds: __DEV__ is false in release mode, so this testing
+ *   configuration ensures OTP autofill works on real test devices until SMS provider integration.
+ * - In final production: Set to false or toggle via EXPO_PUBLIC_TESTING_MODE.
+ */
+export const IS_TESTING_ENVIRONMENT: boolean =
+  Boolean(__DEV__ || process.env.EXPO_PUBLIC_TESTING_MODE === 'true');
+
 export const API_CONFIG = {
   BASE_URL: API_BASE_URL,
   TIMEOUT_MS: 15000,
+  IS_TESTING_ENVIRONMENT,
 };
 
 export const getBaseUrl = (): string => {

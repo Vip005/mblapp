@@ -3,53 +3,47 @@ import { View, Text, StyleSheet, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList, User } from '../../types';
+import { RootStackParamList } from '../../types';
 import { useTheme } from '../../hooks/useTheme';
 import { useAuth } from '../../hooks/useAuth';
-import { storage, STORAGE_KEYS } from '../../utils/storage';
+import { useStore } from '../../hooks/useStore';
 import { storeService } from '../../services/api/storeService';
+import { determineNextAppRoute, AppProgressionTarget } from '../../utils/onboardingProgression';
 
 export const SplashScreen: React.FC = () => {
   const { theme } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { isLoggedIn, user, isLoading } = useAuth();
+  const { user, logout, isLoading } = useAuth();
+  const { selectStoreById } = useStore();
 
   const scale = useRef(new Animated.Value(0.7)).current;
   const opacity = useRef(new Animated.Value(0)).current;
+  const hasNavigated = useRef(false);
 
-  const checkNavigation = async () => {
-    // 1. Check whether auth token and user exist
-    const token = await storage.getAuthToken();
-    const savedUser = await storage.get<User | null>(STORAGE_KEYS.USER, null);
+  const navigateOnce = (target: AppProgressionTarget) => {
+    if (hasNavigated.current) return;
+    hasNavigated.current = true;
 
-    if (!token || !savedUser) {
-      // Unauthenticated -> Login
+    if (target.type === 'AUTH') {
       navigation.reset({
         index: 0,
-        routes: [{ name: 'Auth' }],
+        routes: [{ name: 'Auth', params: { screen: target.screen } }],
       });
-      return;
-    }
-
-    // 2. Authenticated: check if store is selected
-    const selectedStoreId = await storeService.getSelectedStoreId();
-    if (selectedStoreId) {
-      // Authenticated with selected store -> Home
+    } else if (target.type === 'AUTH_STEP') {
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'Auth', params: { screen: target.screen } }],
+      });
+    } else {
       navigation.reset({
         index: 0,
         routes: [{ name: 'Main' }],
       });
-    } else {
-      // Authenticated without selected store -> Store Selection
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'StoreSelection' }],
-      });
     }
   };
 
+  // 1. Logo entrance animation (runs once on mount)
   useEffect(() => {
-    // Logo entrance animation
     Animated.parallel([
       Animated.spring(scale, {
         toValue: 1,
@@ -63,15 +57,44 @@ export const SplashScreen: React.FC = () => {
         useNativeDriver: true,
       }),
     ]).start();
+  }, [opacity, scale]);
 
-    if (isLoading) return;
+  // 2. Startup navigation: strictly wait until AuthContext completes hydration / refresh
+  useEffect(() => {
+    if (isLoading) {
+      return;
+    }
 
-    const timer = setTimeout(() => {
-      checkNavigation();
-    }, 800);
+    const runStartup = async () => {
+      // Allow brief branded splash display (minimum 500ms)
+      await new Promise((res) => setTimeout(res, 500));
 
-    return () => clearTimeout(timer);
-  }, [isLoading]);
+      try {
+        const target = await determineNextAppRoute(user);
+
+        // If target is AUTH (e.g. refresh failed or no session), ensure clean logout
+        if (target.type === 'AUTH') {
+          await logout();
+        }
+
+        // If navigating to Main, ensure StoreContext is hydrated with the selected store
+        if (target.type === 'MAIN') {
+          const storeId = await storeService.getSelectedStoreId();
+          if (storeId) {
+            selectStoreById(storeId).catch(() => {});
+          }
+        }
+
+        navigateOnce(target);
+      } catch (e) {
+        console.warn('[SplashScreen] Error during startup hydration:', e);
+        await logout();
+        navigateOnce({ type: 'AUTH', screen: 'Login' });
+      }
+    };
+
+    runStartup();
+  }, [isLoading, logout, user]);
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.primary }]}>

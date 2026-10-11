@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList } from '../../types';
 import { useTheme } from '../../hooks/useTheme';
 import { AppButton } from '../../components/common/AppButton';
+import { SafeImage } from '../../components/common/SafeImage';
 import { storage, STORAGE_KEYS } from '../../utils/storage';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -47,7 +48,7 @@ const SLIDES: Slide[] = [
     id: '3',
     title: 'Unbeatable Everyday Offers',
     subtitle: 'Enjoy massive discounts, exclusive combo deals, cashback rewards, and 100% free delivery on all your family essentials.',
-    image: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=800&auto=format&fit=crop&q=80',
+    image: '',
     iconName: 'pricetags-outline',
   },
 ];
@@ -108,7 +109,13 @@ export const OnboardingScreen: React.FC = () => {
         renderItem={({ item }) => (
           <View style={[styles.slide, { width: SCREEN_WIDTH }]}>
             <View style={[styles.imageContainer, { borderRadius: theme.borderRadius.xxl }]}>
-              <Image source={{ uri: item.image }} style={styles.image} resizeMode="cover" />
+              <SafeImage
+                uri={item.image}
+                style={styles.image}
+                resizeMode="cover"
+                fallbackIcon="cart-outline"
+                fallbackIconSize={60}
+              />
             </View>
 
             <View style={styles.textContainer}>

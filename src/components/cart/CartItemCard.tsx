@@ -1,22 +1,20 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity } from 'react-native';
+import React from 'react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { CartItem } from '../../types';
 import { useTheme } from '../../hooks/useTheme';
 import { useCart } from '../../hooks/useCart';
 import { QuantitySelector } from '../product/QuantitySelector';
 import { formatCurrency } from '../../utils/formatters';
+import { SafeImage } from '../common/SafeImage';
 
 interface CartItemCardProps {
   item: CartItem;
 }
 
-const FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&auto=format&fit=crop&q=80';
-
 export const CartItemCard: React.FC<CartItemCardProps> = ({ item }) => {
   const { theme } = useTheme();
   const { updateQuantity, removeItem } = useCart();
-  const [imgError, setImgError] = useState(false);
 
   return (
     <View
@@ -31,11 +29,12 @@ export const CartItemCard: React.FC<CartItemCardProps> = ({ item }) => {
       ]}
     >
       <View style={styles.imageBox}>
-        <Image
-          source={{ uri: imgError ? FALLBACK_IMAGE : item.product.image }}
-          onError={() => setImgError(true)}
+        <SafeImage
+          uri={item.product.image}
           style={[styles.image, { borderRadius: theme.borderRadius.md }]}
           resizeMode="cover"
+          fallbackIcon="image-outline"
+          fallbackIconSize={22}
         />
       </View>
 
@@ -117,6 +116,11 @@ const styles = StyleSheet.create({
   image: {
     width: '100%',
     height: '100%',
+  },
+  placeholderBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
   },
   infoBox: {
     flex: 1,

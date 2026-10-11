@@ -17,6 +17,9 @@ import { AuthStackParamList, RootStackParamList } from '../../types';
 import { useTheme } from '../../hooks/useTheme';
 import { useAuth } from '../../hooks/useAuth';
 import { AppButton } from '../../components/common/AppButton';
+import { determineNextAppRoute } from '../../utils/onboardingProgression';
+import { storage } from '../../utils/storage';
+import { IS_TESTING_ENVIRONMENT } from '../../services/api/config';
 
 export const OtpScreen: React.FC = () => {
   const { theme } = useTheme();
@@ -24,22 +27,57 @@ export const OtpScreen: React.FC = () => {
   const rootNav = navigation.getParent<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
   const route = useRoute<RouteProp<AuthStackParamList, 'Otp'>>();
-  const phone = route.params?.phone || (__DEV__ ? '9876543210' : '');
+  const phone = route.params?.phone || (IS_TESTING_ENVIRONMENT ? '9876543210' : '');
   const devOtp = route.params?.devOtp;
 
   const { verifyOtp, login } = useAuth();
   const inputRef = useRef<TextInput>(null);
 
-  const [otp, setOtp] = useState(__DEV__ ? (devOtp || (phone === '9876543210' ? '123456' : '')) : '');
+  const getInitialOtp = (): string => {
+    if (IS_TESTING_ENVIRONMENT && devOtp && typeof devOtp === 'string') {
+      const clean = devOtp.trim().slice(0, 6);
+      if (clean.length === 6) {
+        return clean;
+      }
+    }
+    return '';
+  };
+
+  const [otp, setOtp] = useState<string>(getInitialOtp);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [timer, setTimer] = useState(30);
 
+  // Primary source: sync OTP from direct navigation parameter
   useEffect(() => {
-    if (__DEV__ && devOtp) {
-      setOtp(devOtp);
+    if (!IS_TESTING_ENVIRONMENT) return;
+
+    if (devOtp && typeof devOtp === 'string' && devOtp.trim().length === 6) {
+      setOtp(devOtp.trim().slice(0, 6));
+      return;
     }
+
+    // Secondary fallback ONLY if devOtp param is missing
+    storage.get<string | null>('@grocery_dev_last_server_otp', null).then((cached) => {
+      if (cached && typeof cached === 'string' && cached.trim().length === 6) {
+        setOtp((current) => (!current || current.length === 0 ? cached.trim().slice(0, 6) : current));
+      }
+    });
   }, [devOtp]);
+
+  // Secondary sync listener on navigation focus
+  useEffect(() => {
+    if (!IS_TESTING_ENVIRONMENT) return;
+
+    const unsubscribe = navigation.addListener('focus', () => {
+      const paramOtp = route.params?.devOtp;
+      if (paramOtp && typeof paramOtp === 'string' && paramOtp.trim().length === 6) {
+        setOtp(paramOtp.trim().slice(0, 6));
+      }
+    });
+
+    return unsubscribe;
+  }, [navigation, route.params?.devOtp]);
 
   useEffect(() => {
     if (timer > 0) {
@@ -58,12 +96,18 @@ export const OtpScreen: React.FC = () => {
     setLoading(true);
 
     try {
-      await verifyOtp(phone, targetOtp);
-      // Directly navigate to StoreSelection in the required flow
-      rootNav?.reset({
-        index: 0,
-        routes: [{ name: 'StoreSelection' }],
-      });
+      const res = await verifyOtp(phone, targetOtp);
+      const target = await determineNextAppRoute(res.user);
+      if (target.type === 'AUTH_STEP') {
+        navigation.navigate(target.screen as any);
+      } else if (target.type === 'MAIN') {
+        rootNav?.reset({
+          index: 0,
+          routes: [{ name: 'Main' }],
+        });
+      } else {
+        navigation.navigate('NameUpdate');
+      }
     } catch (err: any) {
       setError(err.message || 'Verification failed. Please check the code.');
     } finally {
@@ -87,8 +131,9 @@ export const OtpScreen: React.FC = () => {
     setError('');
     try {
       const res = await login(phone);
-      if (res?.otp) {
-        setOtp(res.otp);
+      if (IS_TESTING_ENVIRONMENT && res?.otp) {
+        const newCode = res.otp.trim().slice(0, 6);
+        setOtp(newCode);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to resend OTP. Please try again.');
@@ -96,11 +141,10 @@ export const OtpScreen: React.FC = () => {
   };
 
   const handleAutoFill = () => {
-    if (__DEV__) {
-      const code = devOtp || '123456';
-      setOtp(code);
+    if (IS_TESTING_ENVIRONMENT) {
+      setOtp('123456');
       setError('');
-      handleVerify(code);
+      handleVerify('123456');
     }
   };
 
@@ -225,7 +269,7 @@ export const OtpScreen: React.FC = () => {
           keyboardType="number-pad"
           autoComplete="sms-otp"
           textContentType="oneTimeCode"
-          autoFocus={true}
+          autoFocus={!otp || otp.length < 6}
           style={styles.hiddenInput}
         />
 
@@ -240,7 +284,7 @@ export const OtpScreen: React.FC = () => {
         ) : null}
 
         {/* Developer Convenience Chip */}
-        {__DEV__ && (
+        {/* {IS_TESTING_ENVIRONMENT && (
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={handleAutoFill}
@@ -254,10 +298,10 @@ export const OtpScreen: React.FC = () => {
           >
             <Ionicons name="key-outline" size={14} color={theme.colors.primaryDark} />
             <Text style={[styles.devText, { color: theme.colors.primaryDarker }]}>
-              DEV: Fill OTP ({devOtp || '123456'})
+              DEV OTP: 123456
             </Text>
           </TouchableOpacity>
-        )}
+        )} */}
 
         {/* Verify Action Button */}
         <View style={styles.buttonWrapper}>

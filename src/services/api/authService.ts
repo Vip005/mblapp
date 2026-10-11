@@ -1,7 +1,10 @@
-import { apiClient } from './apiClient';
+import { apiClient, refreshCustomerSession } from './apiClient';
 import { User, AuthResponse } from '../../types';
-import { defaultUser } from '../../data/users';
 import { storage, STORAGE_KEYS } from '../../utils/storage';
+import { IS_TESTING_ENVIRONMENT } from './config';
+import { orderHub } from '../realtime/orderHub';
+
+const DEFAULT_AVATAR = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&auto=format&fit=crop&q=80';
 
 export const authService = {
   async login(identifier: string): Promise<{ success: boolean; requiresOtp: boolean; message?: string; otp?: string }> {
@@ -14,14 +17,24 @@ export const authService = {
       phoneNumber: phone,
     });
 
-    const otp = res?.otpHash ? String(res.otpHash) : undefined;
-    const devHint = otp ? ` (OTP: ${otp})` : '';
+    const apiOtp =
+      res?.otpHash ??
+      res?.result?.otpHash ??
+      res?.otp ??
+      res?.result?.otp ??
+      res?.code ??
+      res?.result?.code;
+    const extractedOtp = (apiOtp !== undefined && apiOtp !== null) ? String(apiOtp).trim() : undefined;
+
+    if (IS_TESTING_ENVIRONMENT && extractedOtp) {
+      await storage.set('@grocery_dev_last_server_otp', extractedOtp);
+    }
 
     return {
       success: true,
       requiresOtp: true,
-      message: res?.message || `OTP sent successfully${devHint}`,
-      otp,
+      message: res?.message || 'OTP sent successfully.',
+      otp: IS_TESTING_ENVIRONMENT ? extractedOtp : undefined,
     };
   },
 
@@ -36,9 +49,22 @@ export const authService = {
       throw new Error('OTP is required');
     }
 
+    let otpToVerify = cleanOtp;
+
+    // In testing environment, if user enters '123456',
+    // substitute the active server OTP from send-otp so the backend verifies and returns real JWT.
+    if (IS_TESTING_ENVIRONMENT) {
+      if (cleanOtp === '123456') {
+        const lastServerOtp = await storage.get<string | null>('@grocery_dev_last_server_otp', null);
+        if (lastServerOtp) {
+          otpToVerify = lastServerOtp;
+        }
+      }
+    }
+
     const res = await apiClient.post('/api/CustomerMaster/verify-otp', {
       phoneNumber: cleanPhone,
-      otp: cleanOtp,
+      otp: otpToVerify,
     });
 
     if (!res || !res.token) {
@@ -50,19 +76,23 @@ export const authService = {
     }
 
     const customerId = res.customerId;
-    const customerName = res.customerName || (cleanPhone === '9876543210' ? 'Abu' : '');
-    const token = res.token;
+    const customerName = (res.customerName && typeof res.customerName === 'string') ? res.customerName.trim() : '';
+    const token = res.token || res.accessToken;
+    const refreshToken = res.refreshToken;
 
     const user: User = {
       id: String(customerId),
       name: customerName,
       phone: cleanPhone,
-      email: `${cleanPhone}@groceryapp.com`,
-      avatar: defaultUser.avatar,
+      email: res.email || '',
+      avatar: DEFAULT_AVATAR,
       createdAt: new Date().toISOString(),
     };
 
-    await storage.setAuthToken(token);
+    await storage.saveAuthToken(token);
+    if (refreshToken) {
+      await storage.saveRefreshToken(refreshToken);
+    }
     await storage.set(STORAGE_KEYS.USER, user);
 
     return {
@@ -73,12 +103,7 @@ export const authService = {
   },
 
   async register(data: { name: string; phone: string; email: string }): Promise<AuthResponse> {
-    const res = await this.verifyOtp(data.phone, '123456');
-    const updated = await this.updateProfile({ name: data.name, email: data.email });
-    return {
-      ...res,
-      user: updated,
-    };
+    throw new Error('Direct registration without OTP is deprecated. Please use the mobile number verification flow.');
   },
 
   async getCurrentUser(): Promise<User | null> {
@@ -86,29 +111,54 @@ export const authService = {
   },
 
   async logout(): Promise<boolean> {
-    await storage.removeAuthToken();
-    await storage.remove(STORAGE_KEYS.USER);
+    const user = await storage.get<User | null>(STORAGE_KEYS.USER, null);
+    try {
+      const refreshToken = await storage.getRefreshToken();
+      if (refreshToken) {
+        await apiClient.post('/api/CustomerMaster/logout', { refreshToken });
+      }
+    } catch (e) {
+      console.warn('[authService.logout] Remote logout failed, continuing local cleanup:', e);
+    } finally {
+      try {
+        await orderHub.disconnect();
+      } catch (hubErr) {
+        console.warn('[authService.logout] Failed to disconnect SignalR hub:', hubErr);
+      }
+      await storage.clearAuthSession(user?.id);
+    }
     return true;
   },
 
   async updateProfile(updates: Partial<User>): Promise<User> {
-    const current = await storage.get<User>(STORAGE_KEYS.USER, defaultUser);
+    const current = await storage.get<User | null>(STORAGE_KEYS.USER, null);
+    if (!current) {
+      throw new Error('No authenticated user session found to update.');
+    }
     const updated: User = { ...current, ...updates };
 
     if (updates.name !== undefined && updates.name !== null) {
       const trimmedName = updates.name.trim();
-      const res = await apiClient.put('/api/CustomerMaster/profile-update', {
-        customerName: trimmedName,
-      });
+      updated.name = trimmedName;
 
-      if (res && res.customerName !== undefined && res.customerName !== null) {
-        updated.name = res.customerName;
-      } else {
-        updated.name = trimmedName;
+      try {
+        const res = await apiClient.put('/api/CustomerMaster/profile-update', {
+          customerName: trimmedName,
+        });
+
+        if (res && res.customerName && typeof res.customerName === 'string' && res.customerName.trim().length >= 2) {
+          updated.name = res.customerName.trim();
+        }
+      } catch (e: any) {
+        console.warn('[authService.updateProfile] Remote sync failed, keeping local update:', e.message);
       }
     }
 
     await storage.set(STORAGE_KEYS.USER, updated);
     return updated;
+  },
+
+  async refreshSession(): Promise<{ accessToken: string; refreshToken: string } | null> {
+    return refreshCustomerSession();
   },
 };

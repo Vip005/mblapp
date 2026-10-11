@@ -1,6 +1,7 @@
-import React, { createContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { Product } from '../types';
 import { storage, STORAGE_KEYS } from '../utils/storage';
+import { useAuth } from '../hooks/useAuth';
 
 interface WishlistContextType {
   wishlist: Product[];
@@ -19,29 +20,36 @@ export const WishlistContext = createContext<WishlistContextType>({
 });
 
 export const WishlistProvider = ({ children }: { children: ReactNode }) => {
+  const { user } = useAuth();
   const [wishlist, setWishlist] = useState<Product[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
 
   useEffect(() => {
     const loadWishlist = async () => {
-      const saved = await storage.get<Product[]>(STORAGE_KEYS.WISHLIST, []);
+      if (!user?.id) {
+        setWishlist([]);
+        setIsInitialized(true);
+        return;
+      }
+      const saved = await storage.get<Product[]>(STORAGE_KEYS.customerWishlist(user.id), []);
       setWishlist(saved);
       setIsInitialized(true);
     };
     loadWishlist();
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
-    if (isInitialized) {
-      storage.set(STORAGE_KEYS.WISHLIST, wishlist);
+    if (isInitialized && user?.id) {
+      storage.set(STORAGE_KEYS.customerWishlist(user.id), wishlist);
     }
-  }, [wishlist, isInitialized]);
+  }, [wishlist, isInitialized, user?.id]);
 
   const isInWishlist = (productId: string): boolean => {
     return wishlist.some((item) => item.id === productId);
   };
 
   const toggleWishlist = (product: Product) => {
+    if (!user?.id) return;
     setWishlist((prev) => {
       if (prev.some((item) => item.id === product.id)) {
         return prev.filter((item) => item.id !== product.id);
@@ -55,10 +63,13 @@ export const WishlistProvider = ({ children }: { children: ReactNode }) => {
     setWishlist((prev) => prev.filter((item) => item.id !== productId));
   };
 
-  const clearWishlist = () => {
+  const clearWishlist = useCallback(() => {
     setWishlist([]);
+    if (user?.id) {
+      storage.remove(STORAGE_KEYS.customerWishlist(user.id));
+    }
     storage.remove(STORAGE_KEYS.WISHLIST);
-  };
+  }, [user?.id]);
 
   return (
     <WishlistContext.Provider

@@ -3,6 +3,8 @@ import { User, AuthResponse } from '../types';
 import { authService } from '../services/api/authService';
 import { setOnUnauthorizedCallback } from '../services/api/apiClient';
 import { storage, STORAGE_KEYS } from '../utils/storage';
+import { isTokenExpired } from '../utils/jwt';
+import { navigateToLogin } from '../navigation/navigationRef';
 
 interface AuthContextType {
   user: User | null;
@@ -46,21 +48,42 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     // Listen for 401 Unauthorized from apiClient
-    setOnUnauthorizedCallback(() => {
-      logout();
+    setOnUnauthorizedCallback(async () => {
+      console.warn('[AuthContext] 401 Unauthorized received. Logging out and redirecting to Login.');
+      await logout();
+      navigateToLogin();
     });
 
     const bootstrapAsync = async () => {
       try {
-        const savedToken = await storage.getAuthToken();
+        let activeToken = await storage.getAuthToken();
         const savedUser = await storage.get<User | null>(STORAGE_KEYS.USER, null);
 
-        if (savedToken && savedUser) {
-          setToken(savedToken);
-          setUser(savedUser);
+        // Check if user info is missing
+        if (!savedUser || !savedUser.id) {
+          await logout();
+          return;
         }
+
+        // Check if access token is missing or expired
+        if (!activeToken || isTokenExpired(activeToken)) {
+          console.log('[AuthContext] Access token expired or missing. Attempting refresh token...');
+          const refreshResult = await authService.refreshSession();
+          if (refreshResult && refreshResult.accessToken) {
+            console.log('[AuthContext] Silent refresh token succeeded during startup.');
+            activeToken = refreshResult.accessToken;
+          } else {
+            console.log('[AuthContext] Refresh token failed or expired. Logging out.');
+            await logout();
+            return;
+          }
+        }
+
+        setToken(activeToken);
+        setUser(savedUser);
       } catch (e) {
-        console.warn('Failed to restore auth session:', e);
+        console.warn('[AuthContext] Failed to restore auth session:', e);
+        await logout();
       } finally {
         setIsLoading(false);
       }

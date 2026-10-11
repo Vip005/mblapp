@@ -18,6 +18,7 @@ import { AppInput } from '../../components/common/AppInput';
 import { AppButton } from '../../components/common/AppButton';
 import { ToastMessage } from '../../components/feedback/ToastMessage';
 import { isValidPhone, isValidEmail, isNotEmpty } from '../../utils/validators';
+import { SafeImage, isValidImageUri } from '../../components/common/SafeImage';
 
 const AVATAR_OPTIONS = [
   'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&auto=format&fit=crop&q=80',
@@ -34,7 +35,9 @@ export const EditProfileScreen: React.FC = () => {
   const [name, setName] = useState(user?.name || '');
   const [phone, setPhone] = useState(user?.phone || '');
   const [email, setEmail] = useState(user?.email || '');
-  const [avatar, setAvatar] = useState(user?.avatar || AVATAR_OPTIONS[0]);
+  const [avatar, setAvatar] = useState(
+    isValidImageUri(user?.avatar) ? user!.avatar! : AVATAR_OPTIONS[0]
+  );
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -82,7 +85,13 @@ export const EditProfileScreen: React.FC = () => {
         {/* Avatar Selection */}
         <View style={styles.avatarSection}>
           <View style={[styles.mainAvatarBox, { borderColor: theme.colors.primary }]}>
-            <Image source={{ uri: avatar }} style={styles.mainAvatar} resizeMode="cover" />
+            <SafeImage
+              uri={avatar}
+              style={styles.mainAvatar}
+              resizeMode="cover"
+              fallbackIcon="person-circle-outline"
+              fallbackIconSize={70}
+            />
           </View>
           <Text style={[styles.chooseAvatarText, { color: theme.colors.textSecondary }]}>
             Choose Profile Picture
@@ -100,7 +109,13 @@ export const EditProfileScreen: React.FC = () => {
                     isSelected && { borderColor: theme.colors.primary, borderWidth: 2.5 },
                   ]}
                 >
-                  <Image source={{ uri: imgUri }} style={styles.thumbImg} resizeMode="cover" />
+                  <SafeImage
+                    uri={imgUri}
+                    style={styles.thumbImg}
+                    resizeMode="cover"
+                    fallbackIcon="person-circle-outline"
+                    fallbackIconSize={30}
+                  />
                   {isSelected && (
                     <View style={[styles.checkBadge, { backgroundColor: theme.colors.primary }]}>
                       <Ionicons name="checkmark" size={10} color="#FFF" />

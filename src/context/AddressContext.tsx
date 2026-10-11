@@ -1,6 +1,7 @@
-import React, { createContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { Address } from '../types';
 import { addressService } from '../services/api/addressService';
+import { useAuth } from '../hooks/useAuth';
 
 interface AddressContextType {
   addresses: Address[];
@@ -12,6 +13,7 @@ interface AddressContextType {
   deleteAddress: (id: string) => Promise<boolean>;
   setDefaultAddress: (id: string) => Promise<void>;
   refreshAddresses: () => Promise<void>;
+  clearAddresses: () => void;
 }
 
 export const AddressContext = createContext<AddressContextType>({
@@ -24,30 +26,47 @@ export const AddressContext = createContext<AddressContextType>({
   deleteAddress: async () => false,
   setDefaultAddress: async () => {},
   refreshAddresses: async () => {},
+  clearAddresses: () => {},
 });
 
 export const AddressProvider = ({ children }: { children: ReactNode }) => {
+  const { user } = useAuth();
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [selectedAddress, setSelectedAddress] = useState<Address | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const loadAddresses = async () => {
+  const clearAddresses = useCallback(() => {
+    setAddresses([]);
+    setSelectedAddress(null);
+  }, []);
+
+  const loadAddresses = useCallback(async () => {
+    if (!user?.id) {
+      clearAddresses();
+      setIsLoading(false);
+      return;
+    }
     try {
       setIsLoading(true);
-      const list = await addressService.getAddresses();
+      const list = await addressService.getAddresses(user.id);
       setAddresses(list);
       const defaultAddr = list.find((a) => a.isDefault) || list[0] || null;
-      setSelectedAddress((prev) => prev || defaultAddr);
+      setSelectedAddress((prev) => {
+        if (prev && list.some((a) => a.id === prev.id)) {
+          return prev;
+        }
+        return defaultAddr;
+      });
     } catch (e) {
       console.warn('Failed to load addresses:', e);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [user?.id, clearAddresses]);
 
   useEffect(() => {
     loadAddresses();
-  }, []);
+  }, [loadAddresses]);
 
   const selectAddress = (address: Address) => {
     setSelectedAddress(address);
@@ -100,6 +119,7 @@ export const AddressProvider = ({ children }: { children: ReactNode }) => {
         deleteAddress,
         setDefaultAddress,
         refreshAddresses: loadAddresses,
+        clearAddresses,
       }}
     >
       {children}

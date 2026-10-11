@@ -14,6 +14,7 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Banner, RootStackParamList } from '../../types';
 import { useTheme } from '../../hooks/useTheme';
+import { isValidImageUri } from '../common/SafeImage';
 
 interface BannerCarouselProps {
   banners: Banner[];
@@ -21,9 +22,6 @@ interface BannerCarouselProps {
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const BANNER_WIDTH = SCREEN_WIDTH - 32;
-
-const DEFAULT_BANNER_IMAGE =
-  'https://images.unsplash.com/photo-1542838132-92c53300491e?w=800&auto=format&fit=crop&q=80';
 
 const isValidActionValue = (val?: string): boolean => {
   if (!val) return false;
@@ -63,7 +61,7 @@ const BannerCard: React.FC<{
 }> = ({ item, theme, onPress }) => {
   const [imgError, setImgError] = useState(false);
   const pressable = isBannerPressable(item);
-  const imageUri = !imgError && item.image ? item.image : DEFAULT_BANNER_IMAGE;
+  const imageUri = !imgError && isValidImageUri(item.image) ? item.image!.trim() : '';
   const badgeText = (item.badge || item.discountText)?.trim();
   const titleText = item.title?.trim();
   const subtitleText = item.subtitle?.trim();
@@ -84,12 +82,14 @@ const BannerCard: React.FC<{
         },
       ]}
     >
-      <Image
-        source={{ uri: imageUri }}
-        style={styles.bannerImage}
-        resizeMode="cover"
-        onError={() => setImgError(true)}
-      />
+      {imageUri ? (
+        <Image
+          source={{ uri: imageUri }}
+          style={styles.bannerImage}
+          resizeMode="cover"
+          onError={() => setImgError(true)}
+        />
+      ) : null}
       <View style={styles.overlay} />
 
       <View style={styles.bannerContent}>

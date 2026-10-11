@@ -13,6 +13,7 @@ import { productService } from '../services/api/productService';
 import { useAuth } from '../hooks/useAuth';
 import { useStore } from '../hooks/useStore';
 import { storage, STORAGE_KEYS } from '../utils/storage';
+import { resolveImageUrl } from '../services/api/adapters';
 
 interface CartContextType {
   items: CartItem[];
@@ -99,9 +100,9 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
     // If not logged in or no store selected:
     // When customer logs out or is unauthenticated, do NOT display previous customer's cart
     if (!currentCustomerId || !selectedStoreId) {
+      setItems([]);
+      setActiveCartMaster(null);
       if (!currentCustomerId) {
-        setItems([]);
-        setActiveCartMaster(null);
         await storage.remove(STORAGE_KEYS.CART);
       }
       setIsInitialized(true);
@@ -122,77 +123,84 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
       // 2. Fetch backend CartItemMaster records for this cart
       const backendItems = await cartService.getCartItems(cartMaster.cartID);
 
-      // 3. Hydrate backend items with catalog product details
-      const hydratedItems: CartItem[] = [];
-      for (const bItem of backendItems) {
-        try {
-          const product = await productService.getProductById(String(bItem.productID), selectedStoreId);
-          if (product) {
-            const variant =
-              product.variants.find((v) => String(v.id) === String(bItem.productVariantID)) ||
-              product.variants[0];
+      // 3. Hydrate backend items with catalog product details in parallel
+      const hydratedResults = await Promise.all(
+        backendItems.map(async (bItem) => {
+          try {
+            const product = await productService.getProductById(String(bItem.productID), selectedStoreId);
+            if (product) {
+              const variant =
+                product.variants.find((v) => String(v.id) === String(bItem.productVariantID)) ||
+                product.variants[0];
 
-            hydratedItems.push({
-              id: `${product.id}_${variant.id}`,
-              backendCartItemId: bItem.cartItemID,
-              backendCartId: bItem.cartID,
-              productId: product.id,
-              variantId: variant.id,
-              product,
-              variant,
-              quantity: bItem.quantity,
-              price: bItem.price,
-              totalPrice: bItem.quantity * bItem.price,
-              storeId: product.storeId ?? selectedStoreId,
-            });
-          } else {
-            // Fallback product structure if product details are temporarily unavailable
-            hydratedItems.push({
-              id: `${bItem.productID}_${bItem.productVariantID}`,
-              backendCartItemId: bItem.cartItemID,
-              backendCartId: bItem.cartID,
-              productId: String(bItem.productID),
-              variantId: String(bItem.productVariantID),
-              product: {
-                id: String(bItem.productID),
-                name: `Product #${bItem.productID}`,
-                brand: '',
-                categoryId: '',
-                description: '',
-                image: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&auto=format&fit=crop&q=80',
-                rating: 0,
-                reviewCount: 0,
-                stock: 99,
-                isAvailable: true,
-                tags: [],
-                originalPrice: bItem.price,
-                sellingPrice: bItem.price,
-                discount: 0,
-                variants: [],
-                storeId: selectedStoreId,
-              },
-              variant: {
-                id: String(bItem.productVariantID),
-                name: 'Standard',
-                unit: '1 unit',
+              return {
+                id: `${product.id}_${variant.id}`,
+                backendCartItemId: bItem.cartItemID,
+                backendCartId: bItem.cartID,
+                productId: product.id,
+                variantId: variant.id,
+                product,
+                variant,
+                quantity: bItem.quantity,
                 price: bItem.price,
-                originalPrice: bItem.price,
-                stock: 99,
-                isAvailable: true,
-              },
-              quantity: bItem.quantity,
-              price: bItem.price,
-              totalPrice: bItem.quantity * bItem.price,
-              storeId: selectedStoreId,
-            });
+                totalPrice: bItem.quantity * bItem.price,
+                storeId: product.storeId ?? selectedStoreId,
+              } as CartItem;
+            } else {
+              // Fallback product structure if product details are temporarily unavailable
+              return {
+                id: `${bItem.productID}_${bItem.productVariantID}`,
+                backendCartItemId: bItem.cartItemID,
+                backendCartId: bItem.cartID,
+                productId: String(bItem.productID),
+                variantId: String(bItem.productVariantID),
+                product: {
+                  id: String(bItem.productID),
+                  name: `Product #${bItem.productID}`,
+                  brand: '',
+                  categoryId: '',
+                  description: '',
+                  image: resolveImageUrl((bItem as any).imageUrl || (bItem as any).image || (bItem as any).productImage || ''),
+                  rating: 0,
+                  reviewCount: 0,
+                  stock: 99,
+                  isAvailable: true,
+                  tags: [],
+                  originalPrice: bItem.price,
+                  sellingPrice: bItem.price,
+                  discount: 0,
+                  variants: [],
+                  storeId: selectedStoreId,
+                },
+                variant: {
+                  id: String(bItem.productVariantID),
+                  name: 'Standard',
+                  unit: '1 unit',
+                  price: bItem.price,
+                  originalPrice: bItem.price,
+                  stock: 99,
+                  isAvailable: true,
+                },
+                quantity: bItem.quantity,
+                price: bItem.price,
+                totalPrice: bItem.quantity * bItem.price,
+                storeId: selectedStoreId,
+              } as CartItem;
+            }
+          } catch (itemErr) {
+            console.warn('[CartContext] Failed hydrating cart item:', itemErr);
+            return null;
           }
-        } catch (itemErr) {
-          console.warn('[CartContext] Failed hydrating cart item:', itemErr);
-        }
-      }
+        })
+      );
+
+      const hydratedItems = hydratedResults.filter((item): item is CartItem => item !== null);
 
       setItems(hydratedItems);
-      await storage.set(STORAGE_KEYS.CART, hydratedItems);
+      const cartCacheKey = currentCustomerId
+        ? STORAGE_KEYS.customerCart(currentCustomerId, selectedStoreId)
+        : STORAGE_KEYS.guestCart(selectedStoreId);
+      await storage.set(cartCacheKey, hydratedItems);
     } catch (e: any) {
       console.warn('[CartContext.loadAuthoritativeCart] Error fetching cart:', e.message);
     } finally {
@@ -203,15 +211,20 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
 
   // Re-sync authoritative cart whenever customer or store changes
   useEffect(() => {
+    setItems([]);
+    setActiveCartMaster(null);
     loadAuthoritativeCart();
   }, [loadAuthoritativeCart]);
 
   // Persist items to storage on changes after initialization
   useEffect(() => {
     if (isInitialized) {
-      storage.set(STORAGE_KEYS.CART, items);
+      const cartCacheKey = currentCustomerId
+        ? STORAGE_KEYS.customerCart(currentCustomerId, selectedStoreId)
+        : STORAGE_KEYS.guestCart(selectedStoreId);
+      storage.set(cartCacheKey, items);
     }
-  }, [items, isInitialized]);
+  }, [items, isInitialized, currentCustomerId, selectedStoreId]);
 
   // Dynamic summary calculation driven by CartMaster backend values
   const summary = useMemo(() => {
@@ -528,6 +541,12 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
     // 1. Optimistic clear
     setItems([]);
     setAppliedCoupon(null);
+    if (currentCustomerId) {
+      await storage.remove(STORAGE_KEYS.customerCart(currentCustomerId, selectedStoreId));
+      await storage.remove(STORAGE_KEYS.customerCart(currentCustomerId));
+    } else if (selectedStoreId) {
+      await storage.remove(STORAGE_KEYS.guestCart(selectedStoreId));
+    }
     await storage.remove(STORAGE_KEYS.CART);
 
     // 2. Synchronize with backend

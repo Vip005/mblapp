@@ -16,18 +16,34 @@ import {
   BannerActionType,
   BannerMasterDto,
 } from '../../types';
+import { API_CONFIG } from './config';
+
+/**
+ * Resolves a raw image URL from the backend.
+ * Handles full URLs, relative URLs (prefixed with BASE_URL), and returns empty string if missing.
+ * Eliminates third-party mock fallbacks (Unsplash).
+ */
+export const resolveImageUrl = (rawPath?: string | null): string => {
+  if (!rawPath || typeof rawPath !== 'string') return '';
+  const trimmed = rawPath.trim();
+  if (!trimmed) return '';
+  if (/^https?:\/\//i.test(trimmed) || /^data:image\//i.test(trimmed)) {
+    return trimmed;
+  }
+  const base = API_CONFIG.BASE_URL.replace(/\/+$/, '');
+  const path = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+  return `${base}${path}`;
+};
 
 export const mapCategory = (dto: any): Category => {
+  const rawImg = dto.imageUrl || dto.imageURL || dto.ImageUrl || dto.image || dto.imagePath;
   return {
     id: String(dto.productCategoryID || dto.id || ''),
     name: dto.categoryName || dto.name || '',
     slug:
       dto.categoryCode?.toLowerCase() ||
       (dto.categoryName || '').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-    image:
-      dto.imageUrl ||
-      dto.image ||
-      'https://images.unsplash.com/photo-1610832958506-aa56368176cf?w=400',
+    image: resolveImageUrl(rawImg),
     itemCount: dto.itemCount || 0,
     color: '#E8F5E9',
   };
@@ -63,16 +79,32 @@ export const mapProduct = (dto: any): Product => {
       ? Math.round(((originalPrice - sellingPrice) / originalPrice) * 100)
       : 0;
 
-  const images: string[] = Array.isArray(dto.images)
+  const rawImages: any[] = Array.isArray(dto.images)
     ? dto.images
-        .map((img: any) => (typeof img === 'string' ? img : img?.imageUrl))
-        .filter(Boolean)
+    : Array.isArray(dto.productImages)
+    ? dto.productImages
     : [];
 
-  const primaryImage =
-    images[0] ||
-    dto.image ||
-    'https://images.unsplash.com/photo-1542838132-92c53300491e?w=400';
+  const rawVariantImages: any[] = rawVariants
+    .flatMap((v: any) => (Array.isArray(v.images) ? v.images : []));
+
+  const allRawImages = [...rawImages, ...rawVariantImages];
+
+  const extractedImages: string[] = allRawImages
+    .map((img: any) => {
+      if (typeof img === 'string') return resolveImageUrl(img);
+      const url = img?.imageUrl || img?.imageURL || img?.ImageUrl || img?.imagePath || img?.image;
+      return resolveImageUrl(url);
+    })
+    .filter((url): url is string => Boolean(url && url.length > 0));
+
+  const directImage = resolveImageUrl(
+    dto.imageUrl || dto.imageURL || dto.ImageUrl || dto.productImage || dto.image || dto.imagePath
+  );
+
+  const candidateImages = [...(directImage ? [directImage] : []), ...extractedImages];
+  const images = Array.from(new Set(candidateImages));
+  const primaryImage = images[0] || '';
 
   const totalStock = variants.reduce((sum, v) => sum + v.stock, 0);
 
@@ -83,11 +115,11 @@ export const mapProduct = (dto: any): Product => {
     categoryId: String(dto.productCategoryID || dto.categoryId || ''),
     description: dto.productDescription || dto.description || '',
     image: primaryImage,
-    gallery: images.length > 0 ? images : [primaryImage],
-    rating: Number(dto.rating || 4.5),
-    reviewCount: Number(dto.reviewCount || 18),
-    stock: totalStock > 0 ? totalStock : 50,
-    isAvailable: dto.isActive !== false,
+    gallery: images.length > 0 ? images : (primaryImage ? [primaryImage] : []),
+    rating: Number(dto.rating || 0),
+    reviewCount: Number(dto.reviewCount || 0),
+    stock: totalStock,
+    isAvailable: dto.isActive !== false && (variants.length > 0 ? variants.some((v) => v.isAvailable) : totalStock > 0),
     tags: [dto.categoryName, dto.brandName].filter(Boolean),
     originalPrice: originalPrice > 0 ? originalPrice : sellingPrice,
     sellingPrice,
@@ -102,13 +134,13 @@ export const mapProduct = (dto: any): Product => {
               unit: 'pack',
               price: sellingPrice,
               originalPrice,
-              stock: 50,
-              isAvailable: true,
+              stock: totalStock,
+              isAvailable: dto.isActive !== false && totalStock > 0,
             },
           ],
-    isFeatured: true,
-    isPopular: true,
-    isFlashDeal: discount >= 15,
+    isFeatured: Boolean(dto.isFeatured),
+    isPopular: Boolean(dto.isPopular),
+    isFlashDeal: Boolean(dto.isFlashDeal || discount >= 15),
     storeId: dto.storeID != null ? Number(dto.storeID) : (dto.storeId != null ? Number(dto.storeId) : undefined),
   };
 };
@@ -157,7 +189,10 @@ export const mapAddressToDto = (
 };
 
 export const mapOfferToCoupon = (dto: any): Coupon => {
-  const isPercentage = dto.discountTypeID === 2 || dto.discountTypeName?.toLowerCase().includes('percent');
+  const isPercentage =
+    dto.discountTypeID === 1 ||
+    dto.discountTypeID === 2 ||
+    dto.discountTypeName?.toLowerCase().includes('percent');
   return {
     code: dto.couponCode || `OFFER${dto.offerID}`,
     title: dto.offerName || 'Special Discount',
@@ -172,16 +207,41 @@ export const mapOfferToCoupon = (dto: any): Coupon => {
 
 export const mapOffer = (dto: any): Offer => {
   const coupon = mapOfferToCoupon(dto);
+  const firstCat = dto.categories && dto.categories.length > 0 ? dto.categories[0] : null;
+  const firstProd = dto.products && dto.products.length > 0 ? dto.products[0] : null;
+
   return {
     id: String(dto.offerID || dto.id || ''),
     title: dto.offerName || '',
     code: coupon.code,
     description: coupon.description,
     discountPercent: coupon.discountType === 'percentage' ? coupon.discountValue : undefined,
+    discountValue: Number(dto.discountValue || 0),
+    discountTypeName: dto.discountTypeName || (coupon.discountType === 'percentage' ? 'PERCENTAGE' : 'FLAT'),
     minOrder: coupon.minOrderValue,
-    image: 'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?w=600',
+    maxDiscount: coupon.maxDiscount,
+    image: resolveImageUrl(dto.imageUrl || dto.image || '') || undefined,
+    offerScope: dto.offerScope || undefined,
+    offerType: dto.offerType || undefined,
+    categoryId: firstCat ? String(firstCat.categoryID) : undefined,
+    categoryName: firstCat ? firstCat.categoryName : undefined,
+    productId: firstProd ? String(firstProd.productID) : undefined,
+    productName: firstProd ? firstProd.productName : undefined,
+    validFrom: dto.validFrom || undefined,
     validUntil: dto.validTo || undefined,
     type: dto.couponCode ? 'coupon' : 'deal',
+    isActive: typeof dto.isActive === 'boolean' ? dto.isActive : true,
+    isExpired: typeof dto.isExpired === 'boolean' ? dto.isExpired : false,
+    applicableDaysReadable: dto.applicableDaysReadable || undefined,
+    offerMessage: dto.offerMessage || dto.offerName || '',
+    categories: dto.categories?.map((c: any) => ({
+      id: String(c.categoryID),
+      name: c.categoryName,
+    })),
+    products: dto.products?.map((p: any) => ({
+      id: String(p.productID),
+      name: p.productName,
+    })),
   };
 };
 
@@ -265,20 +325,29 @@ export const getUpdatedTrackingSteps = (
 };
 
 export const mapOrder = (masterDto: any, itemsDto: any[] = []): Order => {
-  const items: OrderItem[] = itemsDto.map((item: any) => ({
-    id: String(item.orderItemID || item.id || ''),
-    productId: String(item.productID || ''),
-    productName: item.productName || 'Grocery Item',
-    brand: 'Fresh Daily',
-    image: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=400',
-    variantName: item.variantLabel || 'Standard',
-    quantity: Number(item.quantity || 1),
-    price: Number(item.price || 0),
-    totalPrice: Number(item.total || item.price * (item.quantity || 1)),
-  }));
+  const items: OrderItem[] = itemsDto.map((item: any) => {
+    const rawImg = item.imageUrl || item.imageURL || item.ImageUrl || item.image || item.productImage;
+    return {
+      id: String(item.orderItemID || item.id || ''),
+      productId: String(item.productID || item.productId || ''),
+      productName: item.productName || 'Grocery Item',
+      brand: item.brandName || item.brand || 'Fresh Daily',
+      image: resolveImageUrl(rawImg),
+      variantName: item.variantLabel || item.unit || 'Standard',
+      quantity: Number(item.quantity || 1),
+      price: Number(item.price || 0),
+      totalPrice: Number(item.total || item.price * (item.quantity || 1)),
+    };
+  });
 
   const mappedStatus = mapBackendStatusToOrderStatus(masterDto.status);
   const trackingSteps: OrderStatusStep[] = getUpdatedTrackingSteps(mappedStatus);
+
+  const subtotal = Number(masterDto.itemTotal || 0);
+  const discount = Number(masterDto.discountTotal || 0);
+  const deliveryCharge = Number(masterDto.deliveryFee || 0);
+  const tax = Number(masterDto.taxes || 0);
+  const total = masterDto.grandTotal != null ? Number(masterDto.grandTotal) : Math.max(0, subtotal - discount + deliveryCharge + tax);
 
   return {
     id: String(masterDto.orderID || masterDto.id || ''),
@@ -286,12 +355,12 @@ export const mapOrder = (masterDto: any, itemsDto: any[] = []): Order => {
     date: masterDto.createdDate || new Date().toISOString(),
     status: mappedStatus,
     items,
-    subtotal: Number(masterDto.itemTotal || 0),
-    discount: Number(masterDto.discountTotal || 0),
+    subtotal,
+    discount,
     couponDiscount: 0,
-    deliveryCharge: Number(masterDto.deliveryFee || 0),
-    tax: Number(masterDto.taxes || 0),
-    total: Number(masterDto.grandTotal || 0),
+    deliveryCharge,
+    tax,
+    total,
     address: {
       id: String(masterDto.AddressId || ''),
       name: 'Registered Address',
@@ -305,16 +374,14 @@ export const mapOrder = (masterDto: any, itemsDto: any[] = []): Order => {
       type: 'Home',
       isDefault: true,
     },
-    deliverySlot: {
-      id: 'slot-1',
-      dateLabel: 'Today',
-      timeWindow: '6:00 PM - 8:00 PM',
-      isAvailable: true,
-    },
     paymentMethod: (masterDto.paymentMode?.toLowerCase() as any) || 'cod',
     trackingSteps,
-    estimatedDelivery: 'Today, 6:00 PM - 8:00 PM',
+    // estimatedDelivery: 'Today, 6:00 PM - 8:00 PM',
     storeId: masterDto.storeID != null ? Number(masterDto.storeID) : undefined,
+    customerId:
+      masterDto.userID != null || masterDto.userId != null || masterDto.customerId != null
+        ? String(masterDto.userID ?? masterDto.userId ?? masterDto.customerId)
+        : undefined,
   };
 };
 
@@ -338,12 +405,13 @@ export const mapStore = (dto: any): Store => {
 };
 
 export const mapBrand = (dto: any): Brand => {
+  const rawImg = dto.imageUrl || dto.image || dto.logoUrl;
   return {
     id: String(dto.productBrandMasterID || dto.id || ''),
     name: dto.productBrandName || dto.name || '',
     code: dto.brandCode || '',
     storeId: Number(dto.storeID || dto.storeId || 0),
-    image: dto.imageUrl || dto.image || undefined,
+    image: resolveImageUrl(rawImg) || undefined,
     isActive: dto.isActive !== false,
   };
 };
@@ -382,6 +450,7 @@ export const mapBanner = (dto: any): Banner => {
   const rawDiscount = dto.discountText || dto.badge || undefined;
   const rawBtn = dto.buttonText || undefined;
   const rawImg = dto.imageUrl || dto.image || undefined;
+  const resolvedBannerImg = resolveImageUrl(rawImg);
 
   return {
     id: String(dto.bannerID || dto.id || ''),
@@ -389,7 +458,7 @@ export const mapBanner = (dto: any): Banner => {
     subtitle: rawSub ? String(rawSub).trim() : undefined,
     discountText: rawDiscount ? String(rawDiscount).trim() : undefined,
     buttonText: rawBtn ? String(rawBtn).trim() : undefined,
-    image: rawImg ? String(rawImg).trim() : undefined,
+    image: resolvedBannerImg || undefined,
     cloudinaryPublicID: dto.cloudinaryPublicID || undefined,
     actionType,
     actionValue: actionVal || undefined,

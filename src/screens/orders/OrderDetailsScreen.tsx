@@ -17,6 +17,7 @@ import { useOrders } from '../../hooks/useOrders';
 import { AppHeader } from '../../components/common/AppHeader';
 import { Badge } from '../../components/common/Badge';
 import { AppButton } from '../../components/common/AppButton';
+import { SafeImage } from '../../components/common/SafeImage';
 import { OrderStatusTimeline } from '../../components/order/OrderStatusTimeline';
 import { ConfirmationModal } from '../../components/modals/ConfirmationModal';
 import { ToastMessage } from '../../components/feedback/ToastMessage';
@@ -32,7 +33,7 @@ export const OrderDetailsScreen: React.FC = () => {
   const route = useRoute<RouteProp<RootStackParamList, 'OrderDetails'>>();
   const { orderId } = route.params;
 
-  const { getOrderById, cancelOrder, updateOrderStatus } = useOrders();
+  const { getOrderById, cancelOrder, updateOrderStatus, updateOrder } = useOrders();
   const contextOrder = getOrderById(orderId);
 
   const [order, setOrder] = useState<Order | undefined>(contextOrder);
@@ -41,10 +42,24 @@ export const OrderDetailsScreen: React.FC = () => {
   const [cancelling, setCancelling] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Sync with context order when context updates
+  // Sync with context order when context updates without regressing authoritative totals
   useEffect(() => {
     if (contextOrder) {
-      setOrder(contextOrder);
+      setOrder((prev) =>
+        prev
+          ? {
+              ...contextOrder,
+              subtotal: prev.subtotal ?? contextOrder.subtotal,
+              discount: prev.discount ?? contextOrder.discount,
+              deliveryCharge: prev.deliveryCharge ?? contextOrder.deliveryCharge,
+              tax: prev.tax ?? contextOrder.tax,
+              total: prev.total ?? contextOrder.total,
+              items: prev.items && prev.items.length > 0 ? prev.items : contextOrder.items,
+              status: contextOrder.status,
+              trackingSteps: contextOrder.trackingSteps,
+            }
+          : contextOrder
+      );
     }
   }, [contextOrder]);
 
@@ -60,7 +75,7 @@ export const OrderDetailsScreen: React.FC = () => {
         const fetched = await orderService.getOrderById(orderId);
         if (isMounted && fetched) {
           setOrder(fetched);
-          updateOrderStatus(orderId, fetched.status, fetched.trackingSteps);
+          updateOrder(fetched);
         }
       } catch (err: any) {
         console.warn('[OrderTracking] Initial REST order fetch failed:', err?.message ?? err);
@@ -202,9 +217,9 @@ export const OrderDetailsScreen: React.FC = () => {
               <Text style={[styles.statusTitle, { color: theme.colors.textPrimary }]}>
                 Order Tracking
               </Text>
-              <Text style={[styles.estimatedText, { color: theme.colors.primaryDark }]}>
+              {/* <Text style={[styles.estimatedText, { color: theme.colors.primaryDark }]}>
                 {order.estimatedDelivery}
-              </Text>
+              </Text> */}
             </View>
             <Badge
               label={order.status}
@@ -251,7 +266,13 @@ export const OrderDetailsScreen: React.FC = () => {
 
           {order.items.map((item) => (
             <View key={item.id} style={styles.itemRow}>
-              <Image source={{ uri: item.image }} style={styles.itemImage} resizeMode="cover" />
+              <SafeImage
+                uri={item.image}
+                style={styles.itemImage}
+                resizeMode="cover"
+                fallbackIcon="basket-outline"
+                fallbackIconSize={20}
+              />
               <View style={styles.itemInfo}>
                 <Text numberOfLines={1} style={[styles.itemName, { color: theme.colors.textPrimary }]}>
                   {item.productName}
@@ -300,21 +321,34 @@ export const OrderDetailsScreen: React.FC = () => {
             <Ionicons name="location-outline" size={18} color={theme.colors.primary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
               <Text style={[styles.detailTitle, { color: theme.colors.textPrimary }]}>
-                {order.address.name} ({order.address.type})
+                {order.address?.name ? `${order.address.name} (${order.address.type || 'Home'})` : 'Delivery Address'}
               </Text>
-              <Text style={[styles.detailSub, { color: theme.colors.textSecondary }]}>
-                {order.address.doorFlat}, {order.address.street}, {order.address.area},{' '}
-                {order.address.city} - {order.address.pincode}
-              </Text>
-              <Text style={[styles.detailSub, { color: theme.colors.textSecondary, marginTop: 2 }]}>
-                Phone: +91 {order.address.phone}
-              </Text>
+              {(() => {
+                const parts = [
+                  order.address?.doorFlat,
+                  order.address?.street,
+                  order.address?.area,
+                  order.address?.city,
+                  order.address?.pincode ? `- ${order.address.pincode}` : '',
+                ].filter(Boolean);
+                const fullText = parts.join(', ').replace(', - ', ' - ');
+                return fullText ? (
+                  <Text style={[styles.detailSub, { color: theme.colors.textSecondary }]}>
+                    {fullText}
+                  </Text>
+                ) : null;
+              })()}
+              {order.address?.phone ? (
+                <Text style={[styles.detailSub, { color: theme.colors.textSecondary, marginTop: 2 }]}>
+                  Phone: +91 {order.address.phone}
+                </Text>
+              ) : null}
             </View>
           </View>
 
           <View style={[styles.divider, { backgroundColor: theme.colors.borderLight }]} />
 
-          <View style={styles.detailRow}>
+          {/* <View style={styles.detailRow}>
             <Ionicons name="time-outline" size={18} color={theme.colors.secondary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
               <Text style={[styles.detailTitle, { color: theme.colors.textPrimary }]}>
@@ -323,7 +357,7 @@ export const OrderDetailsScreen: React.FC = () => {
             </View>
           </View>
 
-          <View style={[styles.divider, { backgroundColor: theme.colors.borderLight }]} />
+          <View style={[styles.divider, { backgroundColor: theme.colors.borderLight }]} /> */}
 
           <View style={styles.detailRow}>
             <Ionicons name="card-outline" size={18} color={theme.colors.primary} />

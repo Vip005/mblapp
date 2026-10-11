@@ -5,6 +5,7 @@ import {
   LogLevel,
 } from '@microsoft/signalr';
 import { storage } from '../../utils/storage';
+import { API_CONFIG } from '../api/config';
 
 export type OrderStatusUpdatedEvent = {
   orderId: number;
@@ -13,8 +14,7 @@ export type OrderStatusUpdatedEvent = {
 
 type StatusUpdateCallback = (data: OrderStatusUpdatedEvent) => void;
 
-const HUB_URL =
-  'https://greenmartapi-aqfedue2dte2dccy.malaysiawest-01.azurewebsites.net/hubs/order';
+const getHubUrl = (): string => `${API_CONFIG.BASE_URL}/hubs/order`;
 
 class OrderHubService {
   private connection: HubConnection | null = null;
@@ -25,7 +25,7 @@ class OrderHubService {
   private getConnection(): HubConnection {
     if (!this.connection) {
       this.connection = new HubConnectionBuilder()
-        .withUrl(HUB_URL, {
+        .withUrl(getHubUrl(), {
           accessTokenFactory: async () => {
             const token = await storage.getAuthToken();
             return token ?? '';
@@ -191,20 +191,26 @@ class OrderHubService {
   }
 
   /**
-   * Stop connection cleanly
+   * Stop connection cleanly and reset state
    */
   async disconnect(): Promise<void> {
-    if (
-      this.connection &&
-      (this.connection.state === HubConnectionState.Connected ||
-        this.connection.state === HubConnectionState.Connecting)
-    ) {
-      try {
+    try {
+      if (
+        this.connection &&
+        (this.connection.state === HubConnectionState.Connected ||
+          this.connection.state === HubConnectionState.Connecting ||
+          this.connection.state === HubConnectionState.Reconnecting)
+      ) {
         await this.connection.stop();
         console.log('[OrderHub] Disconnected');
-      } catch (err: any) {
-        console.warn('[OrderHub] Disconnect error:', err?.message ?? err);
       }
+    } catch (err: any) {
+      console.warn('[OrderHub] Disconnect error:', err?.message ?? err);
+    } finally {
+      this.listeners.clear();
+      this.activeOrders.clear();
+      this.connectingPromise = null;
+      this.connection = null;
     }
   }
 }

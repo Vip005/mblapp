@@ -50,7 +50,7 @@ export const initialOrders: Order[] = [
     tax: 12,
     total: 245,
     address: initialAddresses[0],
-    deliverySlot: deliverySlots[3], // 6pm - 8pm
+    // deliverySlot: deliverySlots[3], // 6pm - 8pm
     paymentMethod: 'upi',
     trackingSteps: [
       { status: 'Placed', label: 'Order Placed', date: '14 Sep, 02:30 PM', completed: true, current: false },
@@ -59,7 +59,7 @@ export const initialOrders: Order[] = [
       { status: 'Out for Delivery', label: 'Out for Delivery', date: '14 Sep, 05:30 PM', completed: true, current: true },
       { status: 'Delivered', label: 'Delivered', completed: false, current: false },
     ],
-    estimatedDelivery: 'Today, by 07:30 PM',
+    // estimatedDelivery: 'Today, by 07:30 PM',
   },
   {
     id: 'ord-002',
@@ -97,7 +97,7 @@ export const initialOrders: Order[] = [
     tax: 45,
     total: 979,
     address: initialAddresses[0],
-    deliverySlot: deliverySlots[1],
+    // deliverySlot: deliverySlots[1],
     paymentMethod: 'cod',
     trackingSteps: [
       { status: 'Placed', label: 'Order Placed', date: '10 Sep, 09:15 AM', completed: true, current: false },
@@ -106,6 +106,6 @@ export const initialOrders: Order[] = [
       { status: 'Out for Delivery', label: 'Out for Delivery', date: '10 Sep, 12:15 PM', completed: true, current: false },
       { status: 'Delivered', label: 'Delivered Successfully', date: '10 Sep, 01:20 PM', completed: true, current: true },
     ],
-    estimatedDelivery: 'Delivered on 10 Sep',
+    // estimatedDelivery: 'Delivered on 10 Sep',
   },
 ];

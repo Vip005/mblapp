@@ -16,7 +16,6 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootStackParamList, Product, ProductVariant } from '../../types';
 import { useTheme } from '../../hooks/useTheme';
-import { useAuth } from '../../hooks/useAuth';
 import { useCart } from '../../hooks/useCart';
 import { useWishlist } from '../../hooks/useWishlist';
 import { useStore } from '../../hooks/useStore';
@@ -26,6 +25,8 @@ import { VariantSelector } from '../../components/product/VariantSelector';
 import { QuantitySelector } from '../../components/product/QuantitySelector';
 import { ProductCard } from '../../components/product/ProductCard';
 import { AppButton } from '../../components/common/AppButton';
+import { CartBadgeButton } from '../../components/common/CartBadgeButton';
+import { SafeImage } from '../../components/common/SafeImage';
 import { LoadingState } from '../../components/feedback/LoadingState';
 import { ErrorState } from '../../components/feedback/ErrorState';
 import { ToastMessage } from '../../components/feedback/ToastMessage';
@@ -37,7 +38,6 @@ export const ProductDetailsScreen: React.FC = () => {
   const { theme } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
-  const { isLoggedIn } = useAuth();
   const { selectedStoreId, selectedStore } = useStore();
   const route = useRoute<RouteProp<RootStackParamList, 'ProductDetails'>>();
   const { productId } = route.params;
@@ -52,8 +52,10 @@ export const ProductDetailsScreen: React.FC = () => {
   const [isAdding, setIsAdding] = useState(false);
   const [selectedQuantity, setSelectedQuantity] = useState(1);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [imgError, setImgError] = useState(false);
 
   useEffect(() => {
+    setImgError(false);
     const fetchDetails = async () => {
       try {
         setLoading(true);
@@ -124,24 +126,13 @@ export const ProductDetailsScreen: React.FC = () => {
     }
   };
 
-  const handleBuyNow = async () => {
-    if (isOutOfStock || isPending || !selectedVariant) return;
-    try {
-      setIsAdding(true);
-      await addItem(product, selectedVariant, selectedQuantity);
-      if (!isLoggedIn) {
-        navigation.navigate('Auth');
-        return;
-      }
-      navigation.navigate('Checkout');
-    } catch (e: any) {
-      Alert.alert('Cart Error', e?.message || 'Failed to proceed to checkout.');
-    } finally {
-      setIsAdding(false);
-    }
-  };
+  const rawGallery = product.gallery && product.gallery.length > 0 ? product.gallery : (product.image ? [product.image] : []);
+  const galleryImages = rawGallery.filter(Boolean);
+  const heroImg = !imgError && galleryImages[0] ? galleryImages[0] : '';
 
-  const galleryImages = product.gallery && product.gallery.length > 0 ? product.gallery : [product.image];
+//   console.log("🖼️ PRODUCT IMAGE:", product.image);
+// console.log("🖼️ PRODUCT GALLERY:", product.gallery);
+// console.log("🖼️ HERO IMAGE:", heroImg);
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.surface }]}>
@@ -160,20 +151,14 @@ export const ProductDetailsScreen: React.FC = () => {
             onPress={() => toggleWishlist(product)}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             style={[styles.circleBtn, { backgroundColor: theme.colors.background }]}
+            accessibilityRole="button"
+            accessibilityLabel={isWished ? 'Remove from wishlist' : 'Add to wishlist'}
           >
             <Ionicons
               name={isWished ? 'heart' : 'heart-outline'}
               size={20}
               color={isWished ? theme.colors.error : theme.colors.textPrimary}
             />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={() => navigation.navigate('Cart')}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            style={[styles.circleBtn, { backgroundColor: theme.colors.background, marginLeft: 8 }]}
-          >
-            <Ionicons name="cart-outline" size={20} color={theme.colors.textPrimary} />
           </TouchableOpacity>
         </View>
       </View>
@@ -187,16 +172,26 @@ export const ProductDetailsScreen: React.FC = () => {
       >
         {/* Product Images Gallery */}
         <View style={styles.galleryContainer}>
-          <Image
-            source={{ uri: galleryImages[0] }}
+          <SafeImage
+            uri={heroImg}
             style={styles.heroImage}
             resizeMode="cover"
+            fallbackIcon="image-outline"
+            fallbackIconSize={48}
+            placeholderStyle={[styles.heroImage, styles.placeholderContainer]}
           />
           {product.discount > 0 && (
             <View style={[styles.discountBanner, { backgroundColor: theme.colors.primary }]}>
               <Text style={[styles.discountBannerText, { color: theme.colors.white }]}>
                 {product.discount}% OFF
               </Text>
+            </View>
+          )}
+          {isOutOfStock && (
+            <View style={styles.outOfStockHeroOverlay} pointerEvents="none">
+              <View style={styles.outOfStockHeroBadge}>
+                <Text style={styles.outOfStockHeroText}>OUT OF STOCK</Text>
+              </View>
             </View>
           )}
         </View>
@@ -228,25 +223,27 @@ export const ProductDetailsScreen: React.FC = () => {
           {/* Rating & Stock */}
           <View style={styles.metaRow}>
             <RatingStars rating={product.rating} reviewCount={product.reviewCount} size="md" />
-            <View style={styles.stockBadge}>
-              <View
-                style={[
-                  styles.stockDot,
-                  { backgroundColor: !isOutOfStock ? theme.colors.success : theme.colors.error },
-                ]}
-              />
-              <Text
-                style={[
-                  styles.stockText,
-                  {
-                    color: !isOutOfStock ? theme.colors.primaryDark : theme.colors.error,
-                    fontSize: theme.typography.size.xs,
-                  },
-                ]}
-              >
-                {!isOutOfStock ? `In Stock (${availableStock} available)` : 'Out of Stock'}
-              </Text>
-            </View>
+            {isOutOfStock && (
+              <View style={styles.stockBadge}>
+                <View
+                  style={[
+                    styles.stockDot,
+                    { backgroundColor: theme.colors.error },
+                  ]}
+                />
+                <Text
+                  style={[
+                    styles.stockText,
+                    {
+                      color: theme.colors.error,
+                      fontSize: theme.typography.size.xs,
+                    },
+                  ]}
+                >
+                  Out of Stock
+                </Text>
+              </View>
+            )}
           </View>
 
           {/* Dynamic Price Display */}
@@ -309,28 +306,6 @@ export const ProductDetailsScreen: React.FC = () => {
               maxQuantity={Math.min(20, availableStock > 0 ? availableStock : 20)}
               size="md"
             />
-          </View>
-
-          {/* Fast Delivery Information Card */}
-          <View
-            style={[
-              styles.deliveryInfoCard,
-              {
-                backgroundColor: theme.colors.primaryLight,
-                borderColor: theme.colors.primary,
-                borderRadius: theme.borderRadius.lg,
-              },
-            ]}
-          >
-            <Ionicons name="bicycle" size={24} color={theme.colors.primary} />
-            <View style={{ marginLeft: 12, flex: 1 }}>
-              <Text style={[styles.deliveryTitle, { color: theme.colors.primaryDarker }]}>
-                Express 15-Minute Delivery
-              </Text>
-              <Text style={[styles.deliveryDesc, { color: theme.colors.primaryDark }]}>
-                Order now to receive by 11:30 AM today • Packed with contactless safety
-              </Text>
-            </View>
           </View>
 
           {/* Product Description */}
@@ -436,6 +411,8 @@ export const ProductDetailsScreen: React.FC = () => {
             Total Price
           </Text>
           <Text
+            numberOfLines={1}
+            adjustsFontSizeToFit
             style={[
               styles.bottomPriceVal,
               {
@@ -445,31 +422,29 @@ export const ProductDetailsScreen: React.FC = () => {
               },
             ]}
           >
-            ₹{selectedVariant.price * selectedQuantity}
+            ₹{((selectedVariant?.price ?? product?.sellingPrice ?? 0) * selectedQuantity).toLocaleString('en-IN')}
           </Text>
         </View>
 
         <View style={styles.bottomActionButtons}>
-          <View style={{ flex: 1, marginRight: 8 }}>
+          <View style={{ flex: 1, marginRight: 12 }}>
             <AppButton
               title={isOutOfStock ? 'Out of Stock' : 'Add to Cart'}
               onPress={handleAddToCart}
-              loading={isPending}
-              disabled={isOutOfStock || isPending}
-              variant="outline"
-              size="md"
-            />
-          </View>
-          <View style={{ flex: 1 }}>
-            <AppButton
-              title={isOutOfStock ? 'Unavailable' : 'Buy Now'}
-              onPress={handleBuyNow}
               loading={isPending}
               disabled={isOutOfStock || isPending}
               variant="primary"
               size="md"
             />
           </View>
+          <CartBadgeButton
+            buttonSize={48}
+            size={22}
+            backgroundColor={theme.colors.background}
+            borderColor={theme.colors.border}
+            borderWidth={1}
+            borderRadius={theme.borderRadius.md}
+          />
         </View>
       </View>
 
@@ -585,21 +560,37 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 20,
   },
-  deliveryInfoCard: {
-    flexDirection: 'row',
+  placeholderContainer: {
     alignItems: 'center',
-    padding: 14,
-    borderWidth: 1,
-    marginBottom: 20,
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
   },
-  deliveryTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 2,
+  placeholderText: {
+    marginTop: 8,
+    fontSize: 12,
   },
-  deliveryDesc: {
-    fontSize: 11,
-    lineHeight: 16,
+  outOfStockHeroOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  outOfStockHeroBadge: {
+    backgroundColor: 'rgba(220, 38, 38, 0.95)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  outOfStockHeroText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 1,
   },
   description: {
     marginBottom: 16,

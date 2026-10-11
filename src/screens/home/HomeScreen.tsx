@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList, Category, Product, Brand, Banner } from '../../types';
+import { RootStackParamList, Category, Product, Brand, Banner, Offer } from '../../types';
 import { useTheme } from '../../hooks/useTheme';
 import { useStore } from '../../hooks/useStore';
 import { DeliveryLocationHeader } from '../../components/home/DeliveryLocationHeader';
@@ -19,8 +19,10 @@ import { SearchBar } from '../../components/common/SearchBar';
 import { BannerCarousel } from '../../components/home/BannerCarousel';
 import { CategoryItem } from '../../components/home/CategoryItem';
 import { SectionHeader } from '../../components/home/SectionHeader';
+import { OffersCarousel } from '../../components/home/OffersCarousel';
 import { ProductCard } from '../../components/product/ProductCard';
 import { bannerService } from '../../services/api/bannerService';
+import { offerService } from '../../services/api/offerService';
 import { categoryService } from '../../services/api/categoryService';
 import { productService } from '../../services/api/productService';
 import { brandService } from '../../services/api/brandService';
@@ -33,6 +35,7 @@ export const HomeScreen: React.FC = () => {
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [banners, setBanners] = useState<Banner[]>([]);
+  const [offers, setOffers] = useState<Offer[]>([]);
   const [flashDeals, setFlashDeals] = useState<Product[]>([]);
   const [popularProducts, setPopularProducts] = useState<Product[]>([]);
   const [recommended, setRecommended] = useState<Product[]>([]);
@@ -45,6 +48,7 @@ export const HomeScreen: React.FC = () => {
     if (!targetStoreId) {
       setCategories([]);
       setBanners([]);
+      setOffers([]);
       setFlashDeals([]);
       setPopularProducts([]);
       setRecommended([]);
@@ -55,13 +59,12 @@ export const HomeScreen: React.FC = () => {
 
     try {
       setLoading(true);
-      // Immediately clear previous banners so old store banners never linger
+      // Immediately clear previous banners and offers so old store data never lingers
       setBanners([]);
+      setOffers([]);
 
-      const [cats, deals, popular, all, storeBrands, storeBanners] = await Promise.all([
+      const [cats, allProducts, storeBrands, storeBanners, storeOffers] = await Promise.all([
         categoryService.getCategories(targetStoreId),
-        productService.getFlashDeals(targetStoreId),
-        productService.getPopularProducts(targetStoreId),
         productService.getProducts(undefined, undefined, targetStoreId),
         brandService.getBrands(targetStoreId),
         bannerService.getBanners(targetStoreId).catch((err) => {
@@ -70,14 +73,24 @@ export const HomeScreen: React.FC = () => {
           }
           return [] as Banner[];
         }),
+        offerService.getOffers(targetStoreId).catch((err) => {
+          if (__DEV__) {
+            console.warn('[HomeScreen] Failed to load offers:', err?.message || err);
+          }
+          return [] as Offer[];
+        }),
       ]);
 
+      const deals = allProducts.filter((p) => p.isFlashDeal || p.discount >= 10);
+      const popular = allProducts.filter((p) => p.isPopular);
+
       setCategories(cats);
-      setFlashDeals(deals);
-      setPopularProducts(popular);
-      setRecommended(all.slice(0, 10));
+      setFlashDeals(deals.length > 0 ? deals : allProducts.slice(0, 4));
+      setPopularProducts(popular.length > 0 ? popular : allProducts.slice(0, 6));
+      setRecommended(allProducts.slice(0, 10));
       setBrands(storeBrands);
       setBanners(storeBanners || []);
+      setOffers(storeOffers || []);
     } catch (e) {
       console.warn('[HomeScreen] Failed to load store home data:', e);
     } finally {
@@ -167,6 +180,14 @@ export const HomeScreen: React.FC = () => {
                   renderItem={({ item }) => <CategoryItem category={item} size="md" />}
                 />
               </>
+            )}
+
+            {/* Special Offers Section (Store-scoped active offers) */}
+            {offers.length > 0 && (
+              <OffersCarousel
+                offers={offers}
+                onViewAll={() => navigation.navigate('Offers')}
+              />
             )}
 
             {/* Featured Brands Section (if available for this store) */}

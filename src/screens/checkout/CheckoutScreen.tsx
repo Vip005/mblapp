@@ -14,7 +14,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   RootStackParamList,
   Address,
-  DeliverySlot,
   PaymentMethodType,
   OrderItem,
 } from '../../types';
@@ -26,19 +25,19 @@ import { useAddress } from '../../hooks/useAddress';
 import { useOrders } from '../../hooks/useOrders';
 import { AppHeader } from '../../components/common/AppHeader';
 import { AppButton } from '../../components/common/AppButton';
-import { DeliverySlotPicker } from '../../components/order/DeliverySlotPicker';
+// import { DeliverySlotPicker } from '../../components/order/DeliverySlotPicker';
 import { PaymentMethodPicker } from '../../components/order/PaymentMethodPicker';
 import { BillBreakdownCard } from '../../components/cart/BillBreakdownCard';
 import { AddressFormModal } from '../../components/modals/AddressFormModal';
-import { deliverySlots } from '../../data/deliverySlots';
+// import { deliverySlots } from '../../data/deliverySlots';
 import { paymentMethods } from '../../data/paymentMethods';
 import { formatCurrency } from '../../utils/formatters';
 
 const STEPS = [
   { id: 1, title: 'Address', icon: 'location-outline' },
-  { id: 2, title: 'Delivery', icon: 'time-outline' },
-  { id: 3, title: 'Payment', icon: 'card-outline' },
-  { id: 4, title: 'Summary', icon: 'receipt-outline' },
+  // { id: 2, title: 'Delivery', icon: 'time-outline' },
+  { id: 2, title: 'Payment', icon: 'card-outline' },
+  { id: 3, title: 'Summary', icon: 'receipt-outline' },
 ];
 
 export const CheckoutScreen: React.FC = () => {
@@ -59,7 +58,7 @@ export const CheckoutScreen: React.FC = () => {
   const { placeOrder } = useOrders();
 
   const [currentStep, setCurrentStep] = useState(1);
-  const [selectedSlot, setSelectedSlot] = useState<DeliverySlot>(deliverySlots[0]);
+  // const [selectedSlot, setSelectedSlot] = useState<DeliverySlot>(deliverySlots[0]);
   const [selectedPayment, setSelectedPayment] = useState<PaymentMethodType>('cod');
   const [addressModalVisible, setAddressModalVisible] = useState(false);
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
@@ -70,7 +69,7 @@ export const CheckoutScreen: React.FC = () => {
       Alert.alert('Address Required', 'Please select or add a delivery address.');
       return;
     }
-    if (currentStep < 4) {
+    if (currentStep < 3) {
       setCurrentStep((s) => s + 1);
     } else {
       handlePlaceOrder();
@@ -120,7 +119,7 @@ export const CheckoutScreen: React.FC = () => {
         tax: summary.tax,
         total: summary.total,
         address: selectedAddress,
-        deliverySlot: selectedSlot,
+        // deliverySlot: selectedSlot,
         paymentMethod: selectedPayment,
         appliedCoupon: summary.appliedCoupon,
         storeId: cartStoreId || selectedStoreId || undefined,
@@ -159,7 +158,7 @@ export const CheckoutScreen: React.FC = () => {
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       <AppHeader
         title="Checkout"
-        subtitle={`Step ${currentStep} of 4: ${STEPS[currentStep - 1].title}`}
+        subtitle={`Step ${currentStep} of 3: ${STEPS[currentStep - 1].title}`}
         onBack={() => {
           if (currentStep > 1) {
             setCurrentStep((s) => s - 1);
@@ -329,7 +328,7 @@ export const CheckoutScreen: React.FC = () => {
         )}
 
         {/* STEP 2: DELIVERY SLOT */}
-        {currentStep === 2 && (
+        {/* {currentStep === 2 && (
           <View style={styles.stepSection}>
             <Text
               style={[
@@ -351,10 +350,10 @@ export const CheckoutScreen: React.FC = () => {
               onSelectSlot={(slot) => setSelectedSlot(slot)}
             />
           </View>
-        )}
+        )} */}
 
         {/* STEP 3: PAYMENT METHOD */}
-        {currentStep === 3 && (
+        {currentStep === 2 && (
           <View style={styles.stepSection}>
             <Text
               style={[
@@ -389,7 +388,7 @@ export const CheckoutScreen: React.FC = () => {
         )}
 
         {/* STEP 4: ORDER REVIEW & SUMMARY */}
-        {currentStep === 4 && (
+        {currentStep === 3 && (
           <View style={styles.stepSection}>
             <Text
               style={[
@@ -431,7 +430,7 @@ export const CheckoutScreen: React.FC = () => {
 
               <View style={[styles.summaryDivider, { backgroundColor: theme.colors.borderLight }]} />
 
-              <View style={styles.summaryMetaRow}>
+              {/* <View style={styles.summaryMetaRow}>
                 <Ionicons name="time-outline" size={18} color={theme.colors.secondary} />
                 <View style={{ marginLeft: 10, flex: 1 }}>
                   <Text style={[styles.summaryMetaTitle, { color: theme.colors.textPrimary }]}>
@@ -443,7 +442,7 @@ export const CheckoutScreen: React.FC = () => {
                 </View>
               </View>
 
-              <View style={[styles.summaryDivider, { backgroundColor: theme.colors.borderLight }]} />
+              <View style={[styles.summaryDivider, { backgroundColor: theme.colors.borderLight }]} /> */}
 
               <View style={styles.summaryMetaRow}>
                 <Ionicons name="card-outline" size={18} color={theme.colors.primary} />
@@ -493,14 +492,14 @@ export const CheckoutScreen: React.FC = () => {
 
         <View style={styles.btnBox}>
           <AppButton
-            title={currentStep === 4 ? 'Place Order' : 'Continue'}
+            title={currentStep === 3 ? 'Place Order' : 'Continue'}
             onPress={handleNextStep}
             loading={isPlacingOrder}
             disabled={isPlacingOrder}
             size="lg"
             variant="primary"
             rightIcon={
-              currentStep === 4 ? (
+              currentStep === 3 ? (
                 <Ionicons name="checkmark-circle" size={18} color="#FFF" />
               ) : (
                 <Ionicons name="arrow-forward" size={18} color="#FFF" />

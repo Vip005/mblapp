@@ -18,15 +18,19 @@ import { useStore } from '../../hooks/useStore';
 import { useCart } from '../../hooks/useCart';
 import { useWishlist } from '../../hooks/useWishlist';
 import { useOrders } from '../../hooks/useOrders';
+import { useAddress } from '../../hooks/useAddress';
+import { useNotifications } from '../../hooks/useNotifications';
+import { orderService } from '../../services/api/orderService';
 import { AppHeader } from '../../components/common/AppHeader';
 import { ConfirmationModal } from '../../components/modals/ConfirmationModal';
+import { isValidImageUri } from '../../components/common/SafeImage';
 
 interface MenuItem {
   icon: keyof typeof Ionicons.glyphMap;
   title: string;
   subtitle?: string;
   badge?: string | number;
-  route?: keyof RootStackParamList;
+  route?: keyof RootStackParamList | 'Orders';
   action?: () => void;
   color?: string;
 }
@@ -36,14 +40,22 @@ export const ProfileScreen: React.FC = () => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { user, logout, isLoggedIn } = useAuth();
   const { clearSelectedStore } = useStore();
-  const { items } = useCart();
-  const { wishlist } = useWishlist();
-  const { orders } = useOrders();
+  const { items, clearCart } = useCart();
+  const { wishlist, clearWishlist } = useWishlist();
+  const { orders, clearOrders } = useOrders();
+  const { clearAddresses } = useAddress();
+  const { clearNotifications } = useNotifications();
 
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
 
   const handleLogout = async () => {
     setLogoutModalVisible(false);
+    clearOrders();
+    clearCart();
+    clearWishlist();
+    clearAddresses();
+    clearNotifications();
+    await orderService.clearOrdersCache(user?.id);
     await logout();
     await clearSelectedStore();
     navigation.reset({
@@ -141,8 +153,8 @@ export const ProfileScreen: React.FC = () => {
           {isLoggedIn ? (
             <View style={styles.userInfoRow}>
               <View style={[styles.avatarBox, { borderColor: theme.colors.primary }]}>
-                {user?.avatar ? (
-                  <Image source={{ uri: user.avatar }} style={styles.avatar} />
+                {isValidImageUri(user?.avatar) ? (
+                  <Image source={{ uri: user!.avatar!.trim() }} style={styles.avatar} />
                 ) : (
                   <View style={[styles.avatarFallback, { backgroundColor: theme.colors.primaryLight }]}>
                     <Text style={[styles.avatarInitial, { color: theme.colors.primaryDark }]}>
@@ -218,7 +230,7 @@ export const ProfileScreen: React.FC = () => {
           {/* Quick Metrics Bar */}
           <View style={[styles.metricsRow, { borderTopColor: theme.colors.borderLight }]}>
             <TouchableOpacity
-              onPress={() => (isLoggedIn ? navigation.navigate('Orders') : navigation.navigate('Auth'))}
+              onPress={() => (isLoggedIn ? navigation.navigate('Main', { screen: 'OrdersTab' }) : navigation.navigate('Auth', { screen: 'Login' }))}
               style={styles.metricItem}
             >
               <Text style={[styles.metricVal, { color: theme.colors.primaryDark }]}>
@@ -242,7 +254,7 @@ export const ProfileScreen: React.FC = () => {
             <View style={[styles.metricDivider, { backgroundColor: theme.colors.borderLight }]} />
 
             <TouchableOpacity
-              onPress={() => navigation.navigate('Cart')}
+              onPress={() => navigation.navigate('Main', { screen: 'CartTab' })}
               style={styles.metricItem}
             >
               <Text style={[styles.metricVal, { color: theme.colors.primaryDark }]}>
@@ -292,7 +304,9 @@ export const ProfileScreen: React.FC = () => {
                         item.action();
                       } else if (item.route) {
                         if (!isLoggedIn && (item.route === 'Addresses' || item.route === 'Orders' || item.route === 'Notifications')) {
-                          navigation.navigate('Auth');
+                          navigation.navigate('Auth', { screen: 'Login' });
+                        } else if (item.route === 'Orders') {
+                          navigation.navigate('Main', { screen: 'OrdersTab' });
                         } else {
                           navigation.navigate(item.route as any);
                         }
