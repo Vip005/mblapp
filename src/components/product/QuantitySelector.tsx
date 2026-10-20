@@ -25,7 +25,7 @@ export const QuantitySelector: React.FC<QuantitySelectorProps> = ({
   const getSizes = () => {
     switch (size) {
       case 'sm':
-        return { height: 28, btnWidth: 26, iconSize: 14, fontSize: 12, paddingH: 6 };
+        return { height: 28, btnWidth: 23, iconSize: 13, fontSize: 12, paddingH: 4 };
       case 'lg':
         return { height: 42, btnWidth: 40, iconSize: 18, fontSize: 16, paddingH: 12 };
       case 'md':

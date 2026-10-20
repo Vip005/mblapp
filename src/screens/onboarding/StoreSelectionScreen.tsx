@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -21,6 +22,7 @@ import { storage, STORAGE_KEYS } from '../../utils/storage';
 import { AppButton } from '../../components/common/AppButton';
 import { ConfirmationModal } from '../../components/modals/ConfirmationModal';
 import { findMatchingStores, normalizePincode } from '../../utils/storeMatcher';
+import { getSafeUserErrorMessage, sanitizeDevLog } from '../../utils/apiError';
 
 export const StoreSelectionScreen: React.FC = () => {
   const { theme } = useTheme();
@@ -28,9 +30,21 @@ export const StoreSelectionScreen: React.FC = () => {
   const route = useRoute<RouteProp<RootStackParamList, 'StoreSelection'>>();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { stores, isLoading: storesLoading, selectStore } = useStore();
+  const {
+    stores,
+    selectedStore,
+    isLoading: storesLoading,
+    error: storesError,
+    selectStore,
+    refreshStores,
+  } = useStore();
   const { selectedAddress, addresses } = useAddress();
   const { items, cartStoreId, clearCart } = useCart();
+
+  // Active, valid stores only
+  const activeStores = useMemo(() => {
+    return (stores || []).filter((s) => s.isActive && s.id > 0);
+  }, [stores]);
 
   // Resolve customer pincode from route params, or selected address, or first address
   const customerPincode = useMemo(() => {
@@ -41,46 +55,88 @@ export const StoreSelectionScreen: React.FC = () => {
     return normalizePincode(raw);
   }, [route.params?.customerPincode, selectedAddress?.pincode, addresses]);
 
-  // Match stores against pincode
+  // Match active stores against pincode
   const { matchingStores, otherStores, hasMatch } = useMemo(() => {
-    return findMatchingStores(customerPincode, stores);
-  }, [customerPincode, stores]);
+    return findMatchingStores(customerPincode, activeStores);
+  }, [customerPincode, activeStores]);
 
   // Local state for chosen store
   const [chosenStore, setChosenStore] = useState<Store | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [isAutoNavigating, setIsAutoNavigating] = useState(false);
   const [showCartResetModal, setShowCartResetModal] = useState(false);
+  const hasAutoNavigatedRef = useRef(false);
 
-  // Auto-select first recommended match if available, or first store
+  const executeStoreSelection = useCallback(
+    async (store: Store) => {
+      setSubmitting(true);
+      try {
+        // Clear previous cart items if switching store
+        if (cartStoreId && cartStoreId !== store.id && items.length > 0) {
+          await clearCart();
+        }
+
+        await selectStore(store);
+        const customerId = user?.id || (await storage.get<User | null>(STORAGE_KEYS.USER, null))?.id;
+        if (customerId) {
+          await storage.set(STORAGE_KEYS.customerOnboarding(customerId), true);
+        }
+        const rootNav = navigation.getParent<NativeStackNavigationProp<RootStackParamList>>() || navigation;
+        rootNav.reset({
+          index: 0,
+          routes: [{ name: 'Main' }],
+        });
+      } catch (err) {
+        hasAutoNavigatedRef.current = false;
+        setIsAutoNavigating(false);
+        sanitizeDevLog('StoreSelectionScreen.executeStoreSelection', err);
+        Alert.alert('Store Selection', getSafeUserErrorMessage(err, 'store'));
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [cartStoreId, clearCart, items.length, navigation, selectStore, user?.id]
+  );
+
+  // Auto-selection rule:
+  // If exactly one valid active store is returned, automatically select that store and navigate to Main.
   useEffect(() => {
-    if (!chosenStore && stores.length > 0) {
+    // 1. Wait until stores finished loading and no API error
+    if (storesLoading || storesError) {
+      return;
+    }
+
+    // 2. If exactly one active store is available, auto-select and navigate to Main
+    if (activeStores.length === 1 && !hasAutoNavigatedRef.current) {
+      hasAutoNavigatedRef.current = true;
+      setIsAutoNavigating(true);
+      executeStoreSelection(activeStores[0]);
+    }
+  }, [storesLoading, storesError, activeStores, executeStoreSelection]);
+
+  // Chosen store management when multiple stores are available
+  useEffect(() => {
+    if (activeStores.length > 1) {
+      // If current chosenStore is still active in activeStores, preserve it
+      if (chosenStore && activeStores.some((s) => s.id === chosenStore.id)) {
+        return;
+      }
+      // If context selectedStore is in activeStores, pick that
+      const currentSelected = activeStores.find((s) => s.id === selectedStore?.id);
+      if (currentSelected) {
+        setChosenStore(currentSelected);
+        return;
+      }
+      // Fallback: nearest recommended match or first active store
       if (matchingStores.length > 0) {
         setChosenStore(matchingStores[0]);
       } else {
-        setChosenStore(stores[0]);
+        setChosenStore(activeStores[0]);
       }
+    } else if (activeStores.length === 0) {
+      setChosenStore(null);
     }
-  }, [matchingStores, stores, chosenStore]);
-
-  const executeStoreSelection = async (store: Store) => {
-    setSubmitting(true);
-    try {
-      await selectStore(store);
-      const customerId = user?.id || (await storage.get<User | null>(STORAGE_KEYS.USER, null))?.id;
-      if (customerId) {
-        await storage.set(STORAGE_KEYS.customerOnboarding(customerId), true);
-      }
-      const rootNav = navigation.getParent<NativeStackNavigationProp<RootStackParamList>>() || navigation;
-      rootNav.reset({
-        index: 0,
-        routes: [{ name: 'Main' }],
-      });
-    } catch (err) {
-      console.warn('[StoreSelectionScreen] Failed to save store:', err);
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  }, [activeStores, matchingStores, chosenStore, selectedStore?.id]);
 
   const handleConfirmStore = async () => {
     if (!chosenStore) return;
@@ -168,6 +224,105 @@ export const StoreSelectionScreen: React.FC = () => {
     );
   };
 
+  // State 1: In-flight API loading or active auto-navigation for single store
+  if (storesLoading || isAutoNavigating || (activeStores.length === 1 && !storesError)) {
+    return (
+      <View
+        style={[
+          styles.loadingContainer,
+          {
+            backgroundColor: theme.colors.background,
+            paddingTop: insets.top,
+            paddingBottom: insets.bottom,
+          },
+        ]}
+      >
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+        <Text style={[styles.loadingText, { color: theme.colors.textPrimary }]}>
+          {isAutoNavigating || activeStores.length === 1
+            ? 'Connecting to FreshMart...'
+            : 'Loading FreshMart stores...'}
+        </Text>
+        <Text style={[styles.subtitle, { color: theme.colors.textSecondary, textAlign: 'center', marginTop: 4 }]}>
+          {isAutoNavigating || activeStores.length === 1
+            ? `Setting up delivery from ${activeStores[0]?.name || 'store'}...`
+            : 'Finding nearby grocery delivery hubs...'}
+        </Text>
+      </View>
+    );
+  }
+
+  // State 2: Store API error state
+  if (!storesLoading && storesError && activeStores.length === 0) {
+    return (
+      <View
+        style={[
+          styles.container,
+          styles.emptyContainer,
+          {
+            backgroundColor: theme.colors.background,
+            paddingTop: insets.top,
+            paddingBottom: insets.bottom,
+          },
+        ]}
+      >
+        <View style={[styles.emptyIconCircle, { backgroundColor: '#FFEBEE' }]}>
+          <Ionicons name="cloud-offline-outline" size={48} color="#D32F2F" />
+        </View>
+        <Text style={[styles.emptyTitle, { color: theme.colors.textPrimary }]}>
+          Unable to Load Stores
+        </Text>
+        <Text style={[styles.emptySubtitle, { color: theme.colors.textSecondary }]}>
+          We couldn't connect to our servers to load available grocery hubs. Please check your internet connection and try again.
+        </Text>
+        <View style={styles.emptyButtonWrap}>
+          <AppButton
+            title="Retry"
+            onPress={refreshStores}
+            size="md"
+            leftIcon={<Ionicons name="refresh" size={18} color="#FFFFFF" />}
+          />
+        </View>
+      </View>
+    );
+  }
+
+  // State 3: Zero stores available empty state
+  if (!storesLoading && activeStores.length === 0) {
+    return (
+      <View
+        style={[
+          styles.container,
+          styles.emptyContainer,
+          {
+            backgroundColor: theme.colors.background,
+            paddingTop: insets.top,
+            paddingBottom: insets.bottom,
+          },
+        ]}
+      >
+        <View style={[styles.emptyIconCircle, { backgroundColor: theme.colors.primaryLight }]}>
+          <Ionicons name="storefront-outline" size={48} color={theme.colors.primary} />
+        </View>
+        <Text style={[styles.emptyTitle, { color: theme.colors.textPrimary }]}>
+          No Stores Available
+        </Text>
+        <Text style={[styles.emptySubtitle, { color: theme.colors.textSecondary }]}>
+          There are currently no active delivery hubs serving this region. Please try refreshing or check back soon.
+        </Text>
+        <View style={styles.emptyButtonWrap}>
+          <AppButton
+            title="Check Again"
+            onPress={refreshStores}
+            size="md"
+            leftIcon={<Ionicons name="refresh" size={18} color="#FFFFFF" />}
+          />
+        </View>
+      </View>
+    );
+  }
+
+  // State 4: Multiple stores available (activeStores.length > 1)
   return (
     <View
       style={[
@@ -228,65 +383,56 @@ export const StoreSelectionScreen: React.FC = () => {
       </View>
 
       {/* Stores List */}
-      {storesLoading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text style={[styles.loadingText, { color: theme.colors.textSecondary }]}>
-            Loading FreshMart stores...
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={[]}
-          renderItem={null}
-          ListHeaderComponent={
-            <View style={styles.listContent}>
-              {/* No match notice */}
-              {!hasMatch && (
-                <View
-                  style={[
-                    styles.noMatchBanner,
-                    {
-                      backgroundColor: '#FFF8E1',
-                      borderColor: '#FFE082',
-                    },
-                  ]}
-                >
-                  <Ionicons name="information-circle" size={20} color="#F57C00" />
-                  <Text style={[styles.noMatchText, { color: '#5D4037' }]}>
-                    No direct store match was found for pincode {customerPincode}. You can choose
-                    any of our available stores below to enjoy grocery delivery.
-                  </Text>
-                </View>
-              )}
+      <FlatList
+        data={[]}
+        renderItem={null}
+        ListHeaderComponent={
+          <View style={styles.listContent}>
+            {/* No match notice */}
+            {!hasMatch && (
+              <View
+                style={[
+                  styles.noMatchBanner,
+                  {
+                    backgroundColor: '#FFF8E1',
+                    borderColor: '#FFE082',
+                  },
+                ]}
+              >
+                <Ionicons name="information-circle" size={20} color="#F57C00" />
+                <Text style={[styles.noMatchText, { color: '#5D4037' }]}>
+                  No direct store match was found for pincode {customerPincode}. You can choose
+                  any of our available stores below to enjoy grocery delivery.
+                </Text>
+              </View>
+            )}
 
-              {/* Recommended Stores */}
-              {matchingStores.length > 0 && (
-                <View style={styles.section}>
-                  <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>
-                    Recommended for You ({matchingStores.length})
-                  </Text>
-                  {matchingStores.map((s) => renderStoreItem(s, true))}
-                </View>
-              )}
+            {/* Recommended Stores */}
+            {matchingStores.length > 0 && (
+              <View style={styles.section}>
+                <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>
+                  Recommended for You ({matchingStores.length})
+                </Text>
+                {matchingStores.map((s) => renderStoreItem(s, true))}
+              </View>
+            )}
 
-              {/* Other Stores */}
-              {otherStores.length > 0 && (
-                <View style={styles.section}>
-                  <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>
-                    {matchingStores.length > 0
-                      ? `Other Stores (${otherStores.length})`
-                      : `Available Stores (${otherStores.length})`}
-                  </Text>
-                  {otherStores.map((s) => renderStoreItem(s, false))}
-                </View>
-              )}
-            </View>
-          }
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollArea}
-        />
-      )}
+            {/* Other Stores */}
+            {otherStores.length > 0 && (
+              <View style={styles.section}>
+                <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>
+                  {matchingStores.length > 0
+                    ? `Other Stores (${otherStores.length})`
+                    : `Available Stores (${otherStores.length})`}
+                </Text>
+                {otherStores.map((s) => renderStoreItem(s, false))}
+              </View>
+            )}
+          </View>
+        }
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollArea}
+      />
 
       {/* Bottom Sticky Action */}
       <View
@@ -526,5 +672,35 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     flex: 1,
+  },
+  emptyContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+  },
+  emptyIconCircle: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  emptyButtonWrap: {
+    width: '100%',
+    maxWidth: 240,
   },
 });

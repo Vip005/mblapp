@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -31,6 +31,7 @@ import { LoadingState } from '../../components/feedback/LoadingState';
 import { ErrorState } from '../../components/feedback/ErrorState';
 import { ToastMessage } from '../../components/feedback/ToastMessage';
 import { productService } from '../../services/api/productService';
+import { getSafeUserErrorMessage, sanitizeDevLog } from '../../utils/apiError';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -42,7 +43,7 @@ export const ProductDetailsScreen: React.FC = () => {
   const route = useRoute<RouteProp<RootStackParamList, 'ProductDetails'>>();
   const { productId } = route.params;
 
-  const { addItem, getItemQuantity, isItemPending } = useCart();
+  const { items, addItem, updateQuantity, removeItem, getItemQuantity, isItemPending } = useCart();
   const { isInWishlist, toggleWishlist } = useWishlist();
 
   const [product, setProduct] = useState<Product | null>(null);
@@ -50,34 +51,47 @@ export const ProductDetailsScreen: React.FC = () => {
   const [similarProducts, setSimilarProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAdding, setIsAdding] = useState(false);
-  const [selectedQuantity, setSelectedQuantity] = useState(1);
+  const isAddingRef = useRef(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [imgError, setImgError] = useState(false);
+  const [fetchError, setFetchError] = useState<unknown | null>(null);
+
+  const fetchDetails = useCallback(async () => {
+    setImgError(false);
+    setFetchError(null);
+    try {
+      setLoading(true);
+      const prod = await productService.getProductById(productId, selectedStoreId || undefined);
+      if (prod) {
+        setProduct(prod);
+        setSelectedVariant(prod.variants[0]);
+        const similar = await productService.getSimilarProducts(prod.id, prod.categoryId, selectedStoreId || undefined);
+        setSimilarProducts(similar);
+      }
+    } catch (e) {
+      sanitizeDevLog('ProductDetailsScreen.fetchDetails', e);
+      setFetchError(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [productId, selectedStoreId]);
 
   useEffect(() => {
-    setImgError(false);
-    const fetchDetails = async () => {
-      try {
-        setLoading(true);
-        const prod = await productService.getProductById(productId, selectedStoreId || undefined);
-        if (prod) {
-          setProduct(prod);
-          setSelectedVariant(prod.variants[0]);
-          const similar = await productService.getSimilarProducts(prod.id, prod.categoryId, selectedStoreId || undefined);
-          setSimilarProducts(similar);
-        }
-      } catch (e) {
-        console.warn('Failed to fetch product details:', e);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchDetails();
-  }, [productId, selectedStoreId]);
+  }, [fetchDetails]);
 
   if (loading) {
     return <LoadingState message="Loading product information..." />;
+  }
+
+  if (fetchError) {
+    return (
+      <ErrorState
+        title="Unable to Load Product"
+        message={getSafeUserErrorMessage(fetchError, 'product')}
+        onRetry={fetchDetails}
+      />
+    );
   }
 
   if (product && selectedStoreId && product.storeId && product.storeId !== selectedStoreId) {
@@ -101,7 +115,12 @@ export const ProductDetailsScreen: React.FC = () => {
   }
 
   const isWished = isInWishlist(product.id);
-  const currentCartQty = getItemQuantity(product.id, selectedVariant.id);
+  const cartItem = items.find(
+    (i) =>
+      String(i.productId) === String(product.id) &&
+      String(i.variantId) === String(selectedVariant.id)
+  );
+  const currentCartQty = cartItem ? cartItem.quantity : getItemQuantity(product.id, selectedVariant.id);
 
   const availableStock = selectedVariant?.stock != null ? selectedVariant.stock : product.stock;
   const isOutOfStock =
@@ -111,17 +130,69 @@ export const ProductDetailsScreen: React.FC = () => {
       : product.stock <= 0);
 
   const itemId = selectedVariant ? `${product.id}_${selectedVariant.id}` : '';
-  const isPending = isAdding || (itemId ? isItemPending(itemId) : false);
+  const isPending =
+    isAdding ||
+    (itemId ? isItemPending(itemId) : false) ||
+    (cartItem?.id ? isItemPending(cartItem.id) : false);
+
+  const unitPrice = selectedVariant?.price ?? product?.sellingPrice ?? 0;
+  const bottomTotalPrice = currentCartQty > 0 ? unitPrice * currentCartQty : unitPrice;
 
   const handleAddToCart = async () => {
-    if (isOutOfStock || isPending || !selectedVariant) return;
+    if (isOutOfStock || isPending || isAddingRef.current || !selectedVariant || !product) return;
     try {
+      isAddingRef.current = true;
       setIsAdding(true);
-      await addItem(product, selectedVariant, selectedQuantity);
-      setToastMessage(`Added ${selectedQuantity} × ${product.name} (${selectedVariant.name}) to cart!`);
+      await addItem(product, selectedVariant, 1);
+      setToastMessage(`Added 1 × ${product.name} (${selectedVariant.name}) to cart!`);
     } catch (e: any) {
-      Alert.alert('Cart Error', e?.message || 'Failed to add item to cart.');
+      sanitizeDevLog('ProductDetailsScreen.handleAddToCart', e);
+      Alert.alert('Cart Error', getSafeUserErrorMessage(e, 'cart'));
     } finally {
+      isAddingRef.current = false;
+      setIsAdding(false);
+    }
+  };
+
+  const handleIncrement = async () => {
+    if (isOutOfStock || isPending || isAddingRef.current || !selectedVariant || !product) return;
+    if (currentCartQty >= availableStock) {
+      Alert.alert('Stock Limit', `Only ${availableStock} units available in stock.`);
+      return;
+    }
+    try {
+      isAddingRef.current = true;
+      setIsAdding(true);
+      if (cartItem) {
+        await updateQuantity(cartItem.id, currentCartQty + 1);
+      } else {
+        await addItem(product, selectedVariant, 1);
+      }
+    } catch (e: any) {
+      sanitizeDevLog('ProductDetailsScreen.handleIncrement', e);
+      Alert.alert('Cart Error', getSafeUserErrorMessage(e, 'cart'));
+    } finally {
+      isAddingRef.current = false;
+      setIsAdding(false);
+    }
+  };
+
+  const handleDecrement = async () => {
+    if (isPending || isAddingRef.current || !cartItem) return;
+    try {
+      isAddingRef.current = true;
+      setIsAdding(true);
+      if (currentCartQty > 1) {
+        await updateQuantity(cartItem.id, currentCartQty - 1);
+      } else {
+        await removeItem(cartItem.id);
+        setToastMessage(`Removed ${product?.name ?? 'Item'} from cart.`);
+      }
+    } catch (e: any) {
+      sanitizeDevLog('ProductDetailsScreen.handleDecrement', e);
+      Alert.alert('Cart Error', getSafeUserErrorMessage(e, 'cart'));
+    } finally {
+      isAddingRef.current = false;
       setIsAdding(false);
     }
   };
@@ -147,6 +218,15 @@ export const ProductDetailsScreen: React.FC = () => {
         </TouchableOpacity>
 
         <View style={styles.navRight}>
+          <CartBadgeButton
+            buttonSize={40}
+            size={20}
+            backgroundColor={theme.colors.background}
+            borderColor={theme.colors.borderLight}
+            borderWidth={1}
+            borderRadius={20}
+            style={{ marginRight: 8 }}
+          />
           <TouchableOpacity
             onPress={() => toggleWishlist(product)}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -275,38 +355,12 @@ export const ProductDetailsScreen: React.FC = () => {
             selectedVariantId={selectedVariant.id}
             onSelectVariant={(v) => {
               setSelectedVariant(v);
-              setSelectedQuantity(1);
             }}
             showPrice
             style={{ marginBottom: 16 }}
           />
 
-          {/* Quantity Selector for adding */}
-          <View style={styles.quantityPickerRow}>
-            <Text
-              style={[
-                styles.sectionLabel,
-                {
-                  color: theme.colors.textPrimary,
-                  fontSize: theme.typography.size.sm,
-                  fontWeight: theme.typography.weight.bold,
-                  marginBottom: 0,
-                },
-              ]}
-            >
-              Quantity
-            </Text>
-            <QuantitySelector
-              quantity={selectedQuantity}
-              onIncrement={() => {
-                if (isOutOfStock) return;
-                setSelectedQuantity((q) => Math.min(q + 1, availableStock > 0 ? availableStock : 1));
-              }}
-              onDecrement={() => setSelectedQuantity((q) => Math.max(1, q - 1))}
-              maxQuantity={Math.min(20, availableStock > 0 ? availableStock : 20)}
-              size="md"
-            />
-          </View>
+          <View style={[styles.divider, { backgroundColor: theme.colors.borderLight }]} />
 
           {/* Product Description */}
           <Text
@@ -408,7 +462,7 @@ export const ProductDetailsScreen: React.FC = () => {
       >
         <View style={styles.bottomPriceCol}>
           <Text style={[styles.bottomPriceLabel, { color: theme.colors.textMuted }]}>
-            Total Price
+            {currentCartQty > 0 ? 'Total Price' : 'Price'}
           </Text>
           <Text
             numberOfLines={1}
@@ -422,20 +476,47 @@ export const ProductDetailsScreen: React.FC = () => {
               },
             ]}
           >
-            ₹{((selectedVariant?.price ?? product?.sellingPrice ?? 0) * selectedQuantity).toLocaleString('en-IN')}
+            ₹{bottomTotalPrice.toLocaleString('en-IN')}
           </Text>
         </View>
 
         <View style={styles.bottomActionButtons}>
           <View style={{ flex: 1, marginRight: 12 }}>
-            <AppButton
-              title={isOutOfStock ? 'Out of Stock' : 'Add to Cart'}
-              onPress={handleAddToCart}
-              loading={isPending}
-              disabled={isOutOfStock || isPending}
-              variant="primary"
-              size="md"
-            />
+            {isOutOfStock ? (
+              <AppButton
+                title="Out of Stock"
+                onPress={() => {}}
+                disabled
+                variant="primary"
+                size="md"
+              />
+            ) : currentCartQty > 0 ? (
+              <View
+                style={[
+                  styles.bottomQtyWrapper,
+                  { opacity: isPending ? 0.7 : 1 },
+                ]}
+                pointerEvents={isPending ? 'none' : 'auto'}
+              >
+                <QuantitySelector
+                  quantity={currentCartQty}
+                  onIncrement={handleIncrement}
+                  onDecrement={handleDecrement}
+                  maxQuantity={Math.min(20, availableStock > 0 ? availableStock : 20)}
+                  size="lg"
+                  style={styles.bottomQtySelector}
+                />
+              </View>
+            ) : (
+              <AppButton
+                title="Add to Cart"
+                onPress={handleAddToCart}
+                loading={isPending}
+                disabled={isOutOfStock || isPending}
+                variant="primary"
+                size="md"
+              />
+            )}
           </View>
           <CartBadgeButton
             buttonSize={48}
@@ -633,5 +714,16 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  bottomQtyWrapper: {
+    height: 48,
+    justifyContent: 'center',
+  },
+  bottomQtySelector: {
+    height: 48,
+    borderRadius: 8,
+    width: '100%',
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
   },
 });

@@ -15,6 +15,7 @@ interface OrderContextType {
   clearOrders: () => void;
   updateOrderStatus: (orderId: string | number, status: OrderStatus, trackingSteps?: OrderStatusStep[]) => void;
   updateOrder: (order: Order) => void;
+  addOrder: (order: Order) => void;
 }
 
 export const OrderContext = createContext<OrderContextType>({
@@ -27,6 +28,7 @@ export const OrderContext = createContext<OrderContextType>({
   clearOrders: () => {},
   updateOrderStatus: () => {},
   updateOrder: () => {},
+  addOrder: () => {},
 });
 
 export const OrderProvider = ({ children }: { children: ReactNode }) => {
@@ -109,6 +111,13 @@ export const OrderProvider = ({ children }: { children: ReactNode }) => {
     );
   };
 
+  const addOrder = useCallback((newOrder: Order) => {
+    setOrders((prev) => [
+      newOrder,
+      ...prev.filter((o) => o.id !== newOrder.id && o.orderNumber !== newOrder.orderNumber),
+    ]);
+  }, []);
+
   return (
     <OrderContext.Provider
       value={{
@@ -121,6 +130,7 @@ export const OrderProvider = ({ children }: { children: ReactNode }) => {
         clearOrders,
         updateOrderStatus,
         updateOrder,
+        addOrder,
       }}
     >
       {children}

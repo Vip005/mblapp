@@ -190,15 +190,6 @@ export const BillBreakdownCard: React.FC<BillBreakdownCardProps> = ({
         </Text>
       </View>
 
-      {summary.productDiscount > 0 && (
-        <View style={styles.row}>
-          <Text style={[styles.rowLabel, { color: theme.colors.primaryDark }]}>Product Discount</Text>
-          <Text style={[styles.rowValue, { color: theme.colors.primaryDark }]}>
-            -{formatCurrency(summary.productDiscount)}
-          </Text>
-        </View>
-      )}
-
       {summary.couponDiscount > 0 && (
         <View style={styles.row}>
           <Text style={[styles.rowLabel, { color: theme.colors.primaryDark }]}>
@@ -229,11 +220,23 @@ export const BillBreakdownCard: React.FC<BillBreakdownCardProps> = ({
         </Text>
       </View>
 
-      {summary.platformFee > 0 && (
+      {(summary.platformFee > 0 || (summary.freePlatformFeeThreshold != null && summary.freePlatformFeeThreshold > 0 && summary.subtotal > 0)) && (
         <View style={styles.row}>
-          <Text style={[styles.rowLabel, { color: theme.colors.textSecondary }]}>Platform Fee</Text>
-          <Text style={[styles.rowValue, { color: theme.colors.textPrimary }]}>
-            {formatCurrency(summary.platformFee)}
+          <View style={styles.deliveryLabelRow}>
+            <Text style={[styles.rowLabel, { color: theme.colors.textSecondary }]}>Platform Fee</Text>
+            {summary.platformFee === 0 && (
+              <View style={[styles.freeBadge, { backgroundColor: theme.colors.successLight }]}>
+                <Text style={[styles.freeBadgeText, { color: theme.colors.primaryDark }]}>FREE</Text>
+              </View>
+            )}
+          </View>
+          <Text
+            style={[
+              styles.rowValue,
+              summary.platformFee === 0 ? { color: theme.colors.primaryDark } : { color: theme.colors.textPrimary },
+            ]}
+          >
+            {summary.platformFee === 0 ? 'FREE' : formatCurrency(summary.platformFee)}
           </Text>
         </View>
       )}

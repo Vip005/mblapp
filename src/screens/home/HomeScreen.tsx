@@ -182,13 +182,12 @@ export const HomeScreen: React.FC = () => {
               </>
             )}
 
-            {/* Special Offers Section (Store-scoped active offers) */}
-            {offers.length > 0 && (
-              <OffersCarousel
-                offers={offers}
-                onViewAll={() => navigation.navigate('Offers')}
-              />
-            )}
+            {/* Special Offers Section (Store-scoped active offers: dynamic 1, multiple, or 0) */}
+            <OffersCarousel
+              offers={offers}
+              onViewAll={() => navigation.navigate('Offers')}
+              loading={loading}
+            />
 
             {/* Featured Brands Section (if available for this store) */}
             {brands.length > 0 && (

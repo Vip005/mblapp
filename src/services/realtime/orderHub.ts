@@ -12,7 +12,15 @@ export type OrderStatusUpdatedEvent = {
   status: string;
 };
 
+export type OrderPaymentUpdatedEvent = {
+  orderId: number;
+  paymentStatus: string;
+  razorpayOrderId?: string;
+  razorpayPaymentId?: string;
+};
+
 type StatusUpdateCallback = (data: OrderStatusUpdatedEvent) => void;
+type PaymentUpdateCallback = (data: OrderPaymentUpdatedEvent) => void;
 
 const getHubUrl = (): string => `${API_CONFIG.BASE_URL}/hubs/order`;
 
@@ -20,6 +28,7 @@ class OrderHubService {
   private connection: HubConnection | null = null;
   private connectingPromise: Promise<void> | null = null;
   private readonly listeners: Set<StatusUpdateCallback> = new Set();
+  private readonly paymentListeners: Set<PaymentUpdateCallback> = new Set();
   private readonly activeOrders: Set<number> = new Set();
 
   private getConnection(): HubConnection {
@@ -50,6 +59,27 @@ class OrderHubService {
             callback(event);
           } catch (err) {
             console.warn('[OrderHub] Listener callback error:', err);
+          }
+        });
+      });
+
+      this.connection.on('OrderPaymentUpdated', (data: any) => {
+        console.log('[OrderHub] Payment updated:', data);
+        const rawOrderId = data?.orderId ?? data?.OrderId ?? 0;
+        const rawStatus = data?.paymentStatus ?? data?.PaymentStatus ?? '';
+
+        const event: OrderPaymentUpdatedEvent = {
+          orderId: Number(rawOrderId),
+          paymentStatus: String(rawStatus),
+          razorpayOrderId: data?.razorpayOrderId ?? data?.RazorpayOrderId,
+          razorpayPaymentId: data?.razorpayPaymentId ?? data?.RazorpayPaymentId,
+        };
+
+        this.paymentListeners.forEach((callback) => {
+          try {
+            callback(event);
+          } catch (err) {
+            console.warn('[OrderHub] Payment listener callback error:', err);
           }
         });
       });
@@ -187,6 +217,24 @@ class OrderHubService {
       this.listeners.delete(callback);
     } else {
       this.listeners.clear();
+    }
+  }
+
+  /**
+   * Register a listener for order payment updates
+   */
+  onPaymentUpdated(callback: PaymentUpdateCallback): void {
+    this.paymentListeners.add(callback);
+  }
+
+  /**
+   * Unregister an order payment update listener
+   */
+  offPaymentUpdated(callback?: PaymentUpdateCallback): void {
+    if (callback) {
+      this.paymentListeners.delete(callback);
+    } else {
+      this.paymentListeners.clear();
     }
   }
 

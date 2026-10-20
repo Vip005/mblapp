@@ -8,6 +8,7 @@ interface PriceDisplayProps {
   originalPrice?: number;
   discount?: number;
   size?: 'sm' | 'md' | 'lg' | 'xl';
+  layout?: 'horizontal' | 'vertical';
   showDiscountBadge?: boolean;
   style?: ViewStyle;
 }
@@ -17,6 +18,7 @@ export const PriceDisplay: React.FC<PriceDisplayProps> = ({
   originalPrice,
   discount,
   size = 'md',
+  layout = 'horizontal',
   showDiscountBadge = true,
   style,
 }) => {
@@ -41,9 +43,12 @@ export const PriceDisplay: React.FC<PriceDisplayProps> = ({
   const calculatedDiscount =
     discount ?? (hasDiscount && originalPrice ? Math.round(((originalPrice - sellingPrice) / originalPrice) * 100) : 0);
 
+  const isVertical = layout === 'vertical';
+
   return (
-    <View style={[styles.container, style]}>
+    <View style={[styles.container, isVertical && styles.verticalContainer, style]}>
       <Text
+        numberOfLines={1}
         style={[
           styles.sellingPrice,
           {
@@ -58,8 +63,10 @@ export const PriceDisplay: React.FC<PriceDisplayProps> = ({
 
       {hasDiscount && originalPrice ? (
         <Text
+          numberOfLines={1}
           style={[
             styles.originalPrice,
+            isVertical && styles.originalPriceVertical,
             {
               color: theme.colors.textMuted,
               fontSize: strike,
@@ -74,6 +81,7 @@ export const PriceDisplay: React.FC<PriceDisplayProps> = ({
         <View
           style={[
             styles.discountBadge,
+            isVertical && styles.discountBadgeVertical,
             {
               backgroundColor: theme.colors.successLight,
               borderRadius: theme.borderRadius.xs,
@@ -118,5 +126,19 @@ const styles = StyleSheet.create({
   },
   discountText: {
     textAlign: 'center',
+  },
+  verticalContainer: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    flexWrap: 'nowrap',
+  },
+  originalPriceVertical: {
+    marginLeft: 0,
+    marginTop: 1,
+  },
+  discountBadgeVertical: {
+    marginLeft: 0,
+    marginTop: 2,
   },
 });

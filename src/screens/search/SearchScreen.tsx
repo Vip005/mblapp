@@ -16,8 +16,10 @@ import { useTheme } from '../../hooks/useTheme';
 import { SearchBar } from '../../components/common/SearchBar';
 import { ProductCard } from '../../components/product/ProductCard';
 import { EmptyState } from '../../components/feedback/EmptyState';
+import { ErrorState } from '../../components/feedback/ErrorState';
 import { productService } from '../../services/api/productService';
 import { storage, STORAGE_KEYS } from '../../utils/storage';
+import { getSafeUserErrorMessage, sanitizeDevLog } from '../../utils/apiError';
 
 const POPULAR_SEARCHES = ['Milk', 'Tomato', 'Apple', 'Basmati Rice', 'Sunflower Oil', 'Bread', 'Paneer', 'Eggs'];
 
@@ -30,6 +32,7 @@ export const SearchScreen: React.FC = () => {
   const [results, setResults] = useState<Product[]>([]);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
+  const [searchError, setSearchError] = useState<unknown | null>(null);
 
   // Load recent searches from AsyncStorage
   useEffect(() => {
@@ -43,19 +46,27 @@ export const SearchScreen: React.FC = () => {
     if (!clean) {
       setResults([]);
       setHasSearched(false);
+      setSearchError(null);
       return;
     }
 
-    setHasSearched(true);
-    const matched = await productService.searchProducts(clean);
-    setResults(matched);
+    try {
+      setSearchError(null);
+      setHasSearched(true);
+      const matched = await productService.searchProducts(clean);
+      setResults(matched);
 
-    // Update recent searches
-    setRecentSearches((prev) => {
-      const updated = [clean, ...prev.filter((item) => item.toLowerCase() !== clean.toLowerCase())].slice(0, 8);
-      storage.set(STORAGE_KEYS.RECENT_SEARCHES, updated);
-      return updated;
-    });
+      // Update recent searches
+      setRecentSearches((prev) => {
+        const updated = [clean, ...prev.filter((item) => item.toLowerCase() !== clean.toLowerCase())].slice(0, 8);
+        storage.set(STORAGE_KEYS.RECENT_SEARCHES, updated);
+        return updated;
+      });
+    } catch (err) {
+      sanitizeDevLog('SearchScreen.performSearch', err);
+      setSearchError(err);
+      setResults([]);
+    }
   }, []);
 
   // Debounced search trigger
@@ -239,6 +250,12 @@ export const SearchScreen: React.FC = () => {
             </View>
           </View>
         </ScrollView>
+      ) : searchError ? (
+        <ErrorState
+          title="Search Failed"
+          message={getSafeUserErrorMessage(searchError, 'search')}
+          onRetry={() => performSearch(query)}
+        />
       ) : results.length === 0 ? (
         <EmptyState
           iconName="search-outline"
@@ -249,6 +266,7 @@ export const SearchScreen: React.FC = () => {
             setQuery('');
             setResults([]);
             setHasSearched(false);
+            setSearchError(null);
           }}
         />
       ) : (

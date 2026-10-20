@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "GroceriesUIApp",
+    "name": "FreshMart",
     "slug": "grocersapp",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -8,7 +8,7 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.afss05steam.grocersapp",
+      "bundleIdentifier": "com.afss05steam.freshmart",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -21,7 +21,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.afss05steam.grocersapp"
+      "package": "com.afss05steam.freshmart"
     },
     "web": {
       "favicon": "./assets/favicon.png"

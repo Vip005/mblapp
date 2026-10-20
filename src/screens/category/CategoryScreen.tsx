@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -17,7 +17,9 @@ import { AppHeader } from '../../components/common/AppHeader';
 import { SafeImage } from '../../components/common/SafeImage';
 import { LoadingState } from '../../components/feedback/LoadingState';
 import { EmptyState } from '../../components/feedback/EmptyState';
+import { ErrorState } from '../../components/feedback/ErrorState';
 import { categoryService } from '../../services/api/categoryService';
+import { getSafeUserErrorMessage, sanitizeDevLog } from '../../utils/apiError';
 
 export const CategoryScreen: React.FC = () => {
   const { theme } = useTheme();
@@ -28,28 +30,32 @@ export const CategoryScreen: React.FC = () => {
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown | null>(null);
+
+  const fetchCategories = useCallback(async () => {
+    if (!selectedStoreId) {
+      setCategories([]);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setLoadError(null);
+      const list = await categoryService.getCategories(selectedStoreId);
+      setCategories(list);
+    } catch (e) {
+      sanitizeDevLog('CategoryScreen.fetchCategories', e);
+      setLoadError(e);
+      setCategories([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedStoreId]);
 
   useEffect(() => {
-    const fetchCategories = async () => {
-      if (!selectedStoreId) {
-        setCategories([]);
-        setLoading(false);
-        return;
-      }
-
-      try {
-        setLoading(true);
-        const list = await categoryService.getCategories(selectedStoreId);
-        setCategories(list);
-      } catch (e) {
-        console.warn('[CategoryScreen] Failed to load categories:', e);
-        setCategories([]);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchCategories();
-  }, [selectedStoreId]);
+  }, [fetchCategories]);
 
   const handleSelectCategory = (cat: Category) => {
     navigation.navigate('ProductListing', {
@@ -60,6 +66,23 @@ export const CategoryScreen: React.FC = () => {
 
   if (loading) {
     return <LoadingState message="Loading grocery aisles..." />;
+  }
+
+  if (loadError) {
+    return (
+      <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+        <AppHeader
+          title="All Categories"
+          subtitle={selectedStore ? `${selectedStore.name}` : undefined}
+          showBack={false}
+        />
+        <ErrorState
+          title="Unable to Load Categories"
+          message={getSafeUserErrorMessage(loadError, 'category')}
+          onRetry={fetchCategories}
+        />
+      </View>
+    );
   }
 
   return (

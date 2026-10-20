@@ -12,17 +12,18 @@ import { CartProvider } from './src/context/CartContext';
 import { OrderProvider } from './src/context/OrderContext';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { navigationRef } from './src/navigation/navigationRef';
+import { AppErrorBoundary } from './src/components/common/AppErrorBoundary';
 
 function AppContent() {
   const { isDark } = React.useContext(ThemeContext);
 
   return (
-    <>
+    <AppErrorBoundary>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <NavigationContainer ref={navigationRef}>
         <RootNavigator />
       </NavigationContainer>
-    </>
+    </AppErrorBoundary>
   );
 }
 

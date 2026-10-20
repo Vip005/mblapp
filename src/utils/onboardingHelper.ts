@@ -32,10 +32,10 @@ export async function getNextOnboardingRoute(user: User | null): Promise<Onboard
     return 'PrimaryAddress';
   }
 
-  // 3. Check Selected Store
+  // 3. Check Selected Store (auto-selects if exactly 1 active store exists)
   try {
-    const selectedStoreId = await storeService.getSelectedStoreId();
-    if (!selectedStoreId) {
+    const resolution = await storeService.validateAndResolveSelectedStore();
+    if (!resolution.selectedStore) {
       return 'StoreSelection';
     }
   } catch (err) {

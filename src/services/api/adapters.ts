@@ -346,8 +346,12 @@ export const mapOrder = (masterDto: any, itemsDto: any[] = []): Order => {
   const subtotal = Number(masterDto.itemTotal || 0);
   const discount = Number(masterDto.discountTotal || 0);
   const deliveryCharge = Number(masterDto.deliveryFee || 0);
+  const platformFee = Number(masterDto.platformFee || 0);
   const tax = Number(masterDto.taxes || 0);
-  const total = masterDto.grandTotal != null ? Number(masterDto.grandTotal) : Math.max(0, subtotal - discount + deliveryCharge + tax);
+  const total =
+    masterDto.grandTotal != null
+      ? Number(masterDto.grandTotal)
+      : Math.max(0, subtotal - discount + deliveryCharge + platformFee + tax);
 
   return {
     id: String(masterDto.orderID || masterDto.id || ''),
@@ -359,6 +363,7 @@ export const mapOrder = (masterDto: any, itemsDto: any[] = []): Order => {
     discount,
     couponDiscount: 0,
     deliveryCharge,
+    platformFee,
     tax,
     total,
     address: {
@@ -375,6 +380,9 @@ export const mapOrder = (masterDto: any, itemsDto: any[] = []): Order => {
       isDefault: true,
     },
     paymentMethod: (masterDto.paymentMode?.toLowerCase() as any) || 'cod',
+    paymentMode: masterDto.paymentMode || 'COD',
+    paymentStatus: masterDto.paymentStatus || 'Pending',
+    razorpayOrderId: masterDto.paymentTransactionID || undefined,
     trackingSteps,
     // estimatedDelivery: 'Today, 6:00 PM - 8:00 PM',
     storeId: masterDto.storeID != null ? Number(masterDto.storeID) : undefined,

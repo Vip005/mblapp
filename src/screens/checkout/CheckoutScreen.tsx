@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -16,6 +17,11 @@ import {
   Address,
   PaymentMethodType,
   OrderItem,
+  Order,
+  PaymentPublicConfigDto,
+  CheckoutSessionCreateResponseDto,
+  CheckoutSessionItemDto,
+  CheckoutPaymentVerifyResponseDto,
 } from '../../types';
 import { useTheme } from '../../hooks/useTheme';
 import { useAuth } from '../../hooks/useAuth';
@@ -25,17 +31,30 @@ import { useAddress } from '../../hooks/useAddress';
 import { useOrders } from '../../hooks/useOrders';
 import { AppHeader } from '../../components/common/AppHeader';
 import { AppButton } from '../../components/common/AppButton';
-// import { DeliverySlotPicker } from '../../components/order/DeliverySlotPicker';
 import { PaymentMethodPicker } from '../../components/order/PaymentMethodPicker';
 import { BillBreakdownCard } from '../../components/cart/BillBreakdownCard';
 import { AddressFormModal } from '../../components/modals/AddressFormModal';
-// import { deliverySlots } from '../../data/deliverySlots';
+import { RazorpayCheckoutModal } from '../../components/payment/RazorpayCheckoutModal';
+import {
+  isNativeRazorpayAvailable,
+  openNativeRazorpayCheckout,
+  RazorpayCheckoutOptions,
+  RazorpaySuccessResponse,
+  RazorpayErrorResponse,
+} from '../../services/payment/razorpayGateway';
+import { paymentService } from '../../services/api/paymentService';
+import {
+  getSafeUserErrorMessage,
+  sanitizeDevLog,
+  isTechnicalOrUnsafeMessage,
+} from '../../utils/apiError';
+import { orderService } from '../../services/api/orderService';
+import { mapOrder } from '../../services/api/adapters';
 import { paymentMethods } from '../../data/paymentMethods';
 import { formatCurrency } from '../../utils/formatters';
 
 const STEPS = [
   { id: 1, title: 'Address', icon: 'location-outline' },
-  // { id: 2, title: 'Delivery', icon: 'time-outline' },
   { id: 2, title: 'Payment', icon: 'card-outline' },
   { id: 3, title: 'Summary', icon: 'receipt-outline' },
 ];
@@ -44,7 +63,7 @@ export const CheckoutScreen: React.FC = () => {
   const { theme } = useTheme();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
-  const { isLoggedIn } = useAuth();
+  const { user, isLoggedIn } = useAuth();
 
   useEffect(() => {
     if (!isLoggedIn) {
@@ -55,16 +74,57 @@ export const CheckoutScreen: React.FC = () => {
   const { items, summary, clearCart, cartStoreId } = useCart();
   const { selectedStoreId } = useStore();
   const { addresses, selectedAddress, selectAddress, addAddress } = useAddress();
-  const { placeOrder } = useOrders();
+  const { placeOrder, updateOrder, addOrder } = useOrders();
 
   const [currentStep, setCurrentStep] = useState(1);
-  // const [selectedSlot, setSelectedSlot] = useState<DeliverySlot>(deliverySlots[0]);
-  const [selectedPayment, setSelectedPayment] = useState<PaymentMethodType>('cod');
+  const [selectedPayment, setSelectedPayment] = useState<PaymentMethodType>('razorpay');
   const [addressModalVisible, setAddressModalVisible] = useState(false);
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
+  const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
+  const [isRecoveringStatus, setIsRecoveringStatus] = useState(false);
+
+  // Runtime Payment Gateway State
+  const [paymentConfig, setPaymentConfig] = useState<PaymentPublicConfigDto | null>(null);
+  const [isLoadingPaymentConfig, setIsLoadingPaymentConfig] = useState(false);
+
+  // Guard against rapid duplicate taps
+  const isSubmittingRef = useRef(false);
+
+  // WebView Fallback Modal State (Expo Go / Standard environment)
+  const [checkoutModalVisible, setCheckoutModalVisible] = useState(false);
+  const [activeCheckoutOptions, setActiveCheckoutOptions] = useState<RazorpayCheckoutOptions | null>(null);
+  const [activeCheckoutSession, setActiveCheckoutSession] = useState<CheckoutSessionCreateResponseDto | null>(null);
+
+  const currentStoreId = cartStoreId || selectedStoreId || null;
+
+  // Load public payment gateway configuration dynamically from backend
+  const loadPaymentConfig = useCallback(async () => {
+    try {
+      setIsLoadingPaymentConfig(true);
+      const config = await paymentService.getPaymentConfig(currentStoreId);
+      setPaymentConfig(config);
+
+      // If gateway is disabled, fallback immediately to COD
+      if (!config.isEnabled) {
+        setSelectedPayment('cod');
+      } else {
+        setSelectedPayment('razorpay');
+      }
+    } catch (err: any) {
+      console.warn('[Checkout] Failed to load payment config:', err?.message || err);
+      setPaymentConfig(null);
+      setSelectedPayment('cod');
+    } finally {
+      setIsLoadingPaymentConfig(false);
+    }
+  }, [currentStoreId]);
+
+  useEffect(() => {
+    loadPaymentConfig();
+  }, [loadPaymentConfig]);
 
   const handleNextStep = () => {
-    if (isPlacingOrder) return;
+    if (isPlacingOrder || isVerifyingPayment || isRecoveringStatus) return;
     if (currentStep === 1 && !selectedAddress) {
       Alert.alert('Address Required', 'Please select or add a delivery address.');
       return;
@@ -76,83 +136,406 @@ export const CheckoutScreen: React.FC = () => {
     }
   };
 
+  /**
+   * Handle payment verification after Razorpay success callback.
+   * Treats backend verification response as authoritative.
+   * OrderMaster is created on backend during verify-checkout.
+   */
+  const handlePaymentSuccess = async (
+    razorpayData: RazorpaySuccessResponse,
+    session: CheckoutSessionCreateResponseDto
+  ) => {
+    setIsVerifyingPayment(true);
+    setCheckoutModalVisible(false);
+
+    try {
+      let verifyResult: CheckoutPaymentVerifyResponseDto;
+
+      try {
+        verifyResult = await paymentService.verifyCheckoutPayment({
+          attemptToken: session.attemptToken,
+          razorpayOrderId: session.razorpayOrderId,
+          razorpayPaymentId: razorpayData.razorpay_payment_id,
+          razorpaySignature: razorpayData.razorpay_signature,
+        });
+      } catch (verifyErr: any) {
+        // Network timeout / offline interruption during verify:
+        // Do NOT fail immediately! Poll the authoritative status endpoint to recover.
+        console.warn('[Checkout] Verification network exception, attempting status recovery:', verifyErr?.message);
+        setIsRecoveringStatus(true);
+        const recoveredAttempt = await paymentService.recoverCheckoutStatus(session.attemptToken, 3, 2000);
+
+        verifyResult = {
+          isSuccess: recoveredAttempt.status === 'OrderCreated',
+          status: recoveredAttempt.status,
+          orderID: recoveredAttempt.orderID,
+          orderNumber: recoveredAttempt.orderNumber,
+          message: recoveredAttempt.failureReason || null,
+          isDuplicate: false,
+          orderDetails: recoveredAttempt.orderDetails,
+          amountInPaise: recoveredAttempt.amountInPaise,
+        };
+      }
+
+      // Authoritative Backend Status Evaluation
+      if (
+        verifyResult.status === 'OrderCreated' &&
+        verifyResult.orderID &&
+        Number(verifyResult.orderID) > 0
+      ) {
+        // 1. Construct or map Order object
+        let confirmedOrder: Order;
+        if (verifyResult.orderDetails?.order) {
+          confirmedOrder = mapOrder(
+            verifyResult.orderDetails.order,
+            verifyResult.orderDetails.items || []
+          );
+        } else {
+          // Construct local Order from cart data and verified IDs
+          const orderItems: OrderItem[] = items.map((i) => ({
+            id: `oi-${Date.now()}-${i.productId}`,
+            productId: i.productId,
+            variantId: i.variantId || i.variant?.id,
+            productName: i.product.name,
+            brand: i.product.brand,
+            image: i.product.image,
+            variantName: i.variant.name,
+            quantity: i.quantity,
+            price: i.price,
+            totalPrice: i.totalPrice,
+          }));
+
+          confirmedOrder = {
+            id: String(verifyResult.orderID),
+            orderNumber: verifyResult.orderNumber || `ORD-${verifyResult.orderID}`,
+            date: new Date().toISOString(),
+            status: 'Confirmed',
+            subtotal: summary.subtotal,
+            discount: 0,
+            couponDiscount: summary.couponDiscount,
+            deliveryCharge: session.deliveryFee,
+            platformFee: session.platformFee,
+            tax: session.taxes,
+            total: session.grandTotal,
+            address: selectedAddress!,
+            items: orderItems,
+            paymentMethod: 'razorpay',
+            paymentStatus: 'Paid',
+            paymentMode: 'RAZORPAY',
+            appliedCoupon: summary.appliedCoupon,
+            storeId: currentStoreId ? Number(currentStoreId) : undefined,
+            trackingSteps: [
+              { status: 'Placed', label: 'Order Placed', date: 'Just now', completed: true, current: false },
+              { status: 'Confirmed', label: 'Order Confirmed', date: 'Just now', completed: true, current: true },
+              { status: 'Preparing', label: 'Packed & Dispatched', completed: false, current: false },
+              { status: 'Out for Delivery', label: 'Out for Delivery', completed: false, current: false },
+              { status: 'Delivered', label: 'Delivered', completed: false, current: false },
+            ],
+          };
+        }
+
+        // 2. Persist order in customer storage & context
+        await orderService.saveVerifiedOrder(confirmedOrder, user?.id);
+        addOrder(confirmedOrder);
+
+        // 3. Clear cart strictly after verified OrderCreated confirmation
+        try {
+          await clearCart();
+        } catch (cartErr: any) {
+          console.warn('[Checkout] Cart clear warning:', cartErr?.message);
+        }
+
+        // 4. Navigate to OrderSuccess
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'OrderSuccess', params: { orderId: String(verifyResult.orderID) } }],
+        });
+      } else if (verifyResult.status === 'ReconciliationRequired') {
+        // Payment was captured by gateway, but order creation encountered a concurrency or inventory issue.
+        // Backend recovery worker will issue a full refund or order will be reconciled.
+        // Cart is PRESERVED.
+        Alert.alert(
+          'Order Under Verification',
+          'Your payment was received, but stock reservation could not complete immediately. Our system has automatically enqueued a full refund or our support team will fulfill your order shortly. Your cart has been preserved.',
+          [
+            {
+              text: 'View Orders',
+              onPress: () => navigation.replace('Main', { screen: 'OrdersTab' } as any),
+            },
+            { text: 'OK', style: 'cancel' },
+          ]
+        );
+      } else if (verifyResult.status === 'Refunded') {
+        // Attempt was refunded because items could not be fulfilled
+        Alert.alert(
+          'Payment Refunded',
+          'Your payment has been refunded as the requested items could not be reserved. Your cart has been preserved for you to try again.',
+          [{ text: 'OK', style: 'cancel' }]
+        );
+      } else if (verifyResult.status === 'PaymentProcessing') {
+        Alert.alert(
+          'Payment Processing',
+          'Your payment is currently being confirmed with the bank. Please check your Orders page in a moment. Your cart is preserved.',
+          [
+            {
+              text: 'Check Orders',
+              onPress: () => navigation.replace('Main', { screen: 'OrdersTab' } as any),
+            },
+            { text: 'OK', style: 'cancel' },
+          ]
+        );
+      } else {
+        // PaymentFailed or other error
+        const safeReason =
+          verifyResult.message && !isTechnicalOrUnsafeMessage(verifyResult.message)
+            ? verifyResult.message
+            : 'Payment verification could not be confirmed. Your cart has been preserved.';
+        Alert.alert(
+          'Payment Not Completed',
+          safeReason,
+          [{ text: 'OK', style: 'cancel' }]
+        );
+      }
+    } catch (err: any) {
+      sanitizeDevLog('CheckoutScreen.handlePaymentSuccess', err);
+      Alert.alert(
+        'Payment Verification Pending',
+        'We were unable to confirm order creation right now due to a network interruption. Your cart has been preserved. Please check your Orders list before attempting to pay again.',
+        [
+          {
+            text: 'Check Orders',
+            onPress: () => navigation.replace('Main', { screen: 'OrdersTab' } as any),
+          },
+          { text: 'OK', style: 'cancel' },
+        ]
+      );
+    } finally {
+      setIsVerifyingPayment(false);
+      setIsRecoveringStatus(false);
+      setIsPlacingOrder(false);
+      isSubmittingRef.current = false;
+    }
+  };
+
+  /**
+   * Handle payment failure or dismissal callback
+   */
+  const handlePaymentError = async (
+    error: RazorpayErrorResponse,
+    session: CheckoutSessionCreateResponseDto
+  ) => {
+    setCheckoutModalVisible(false);
+    setIsPlacingOrder(false);
+    isSubmittingRef.current = false;
+
+    try {
+      await paymentService.failCheckoutPayment({
+        attemptToken: session.attemptToken,
+        razorpayOrderId: session.razorpayOrderId,
+        failureCode: String(error.code),
+        failureReason: error.description,
+      });
+    } catch (recordErr: any) {
+      sanitizeDevLog('CheckoutScreen.failCheckoutPayment', recordErr);
+    }
+
+    const safeDescription =
+      error.description && !isTechnicalOrUnsafeMessage(error.description)
+        ? error.description
+        : 'Payment was cancelled or could not be processed.';
+
+    Alert.alert(
+      'Payment Not Completed',
+      `${safeDescription}\n\nYour cart has been preserved.`,
+      [
+        {
+          text: 'Switch to COD',
+          onPress: () => {
+            setSelectedPayment('cod');
+            setCurrentStep(2);
+          },
+        },
+        { text: 'OK', style: 'cancel' },
+      ]
+    );
+  };
+
+  /**
+   * Main order submission handler
+   */
   const handlePlaceOrder = async () => {
-    if (isPlacingOrder) return;
+    if (isSubmittingRef.current || isPlacingOrder || isVerifyingPayment || isRecoveringStatus) {
+      return;
+    }
+
     if (!selectedAddress) {
       Alert.alert('Address Required', 'Please select or add a delivery address.');
       return;
     }
-    if (selectedPayment !== 'cod') {
-      Alert.alert(
-        'Payment Unavailable',
-        'Online payment is currently unavailable. Please choose Cash on Delivery.'
-      );
-      return;
-    }
+
     if (!items || items.length === 0) {
       Alert.alert('Empty Cart', 'Your cart is empty. Please add items before checkout.');
       return;
     }
 
+    isSubmittingRef.current = true;
     setIsPlacingOrder(true);
 
     try {
-      const orderItems: OrderItem[] = items.map((i) => ({
-        id: `oi-${Date.now()}-${i.productId}`,
-        productId: i.productId,
-        variantId: i.variantId || i.variant?.id,
-        productName: i.product.name,
-        brand: i.product.brand,
-        image: i.product.image,
-        variantName: i.variant.name,
-        quantity: i.quantity,
-        price: i.price,
-        totalPrice: i.totalPrice,
-      }));
+      const isOnline = selectedPayment !== 'cod';
 
-      const newOrder = await placeOrder({
-        items: orderItems,
-        subtotal: summary.subtotal,
-        discount: summary.productDiscount,
-        couponDiscount: summary.couponDiscount,
-        deliveryCharge: summary.deliveryCharge,
-        tax: summary.tax,
-        total: summary.total,
-        address: selectedAddress,
-        // deliverySlot: selectedSlot,
-        paymentMethod: selectedPayment,
-        appliedCoupon: summary.appliedCoupon,
-        storeId: cartStoreId || selectedStoreId || undefined,
-      });
+      // ==========================================
+      // CASH ON DELIVERY (COD) FLOW
+      // ==========================================
+      if (!isOnline) {
+        const orderItems: OrderItem[] = items.map((i) => ({
+          id: `oi-${Date.now()}-${i.productId}`,
+          productId: i.productId,
+          variantId: i.variantId || i.variant?.id,
+          productName: i.product.name,
+          brand: i.product.brand,
+          image: i.product.image,
+          variantName: i.variant.name,
+          quantity: i.quantity,
+          price: i.price,
+          totalPrice: i.totalPrice,
+        }));
 
-      // Clear the cart strictly AFTER the complete order placement has succeeded
-      try {
-        await clearCart();
-      } catch (cartErr: any) {
-        console.warn('[ORDER DEBUG] Cart clear warning:', cartErr.message);
-      }
+        const newOrder = await placeOrder({
+          items: orderItems,
+          subtotal: summary.subtotal,
+          discount: 0,
+          couponDiscount: summary.couponDiscount,
+          deliveryCharge: summary.deliveryCharge,
+          platformFee: summary.platformFee,
+          tax: summary.tax,
+          total: summary.total,
+          address: selectedAddress,
+          paymentMethod: 'cod',
+          appliedCoupon: summary.appliedCoupon,
+          storeId: currentStoreId ? Number(currentStoreId) : undefined,
+        });
 
-      // Navigate to order success screen with navigation error tagging
-      try {
+        // Clear cart strictly after verified order placement
+        try {
+          await clearCart();
+        } catch (cartErr: any) {
+          console.warn('[Checkout] Cart clear warning:', cartErr.message);
+        }
+
         navigation.reset({
           index: 0,
           routes: [{ name: 'OrderSuccess', params: { orderId: newOrder.id } }],
         });
-      } catch (navErr: any) {
-        throw new Error(
-          `Order placement succeeded (Order #${newOrder.orderNumber || newOrder.id}), but failed at navigation: ${navErr.message}`
+        return;
+      }
+
+      // ==========================================
+      // PAYMENT-FIRST ONLINE FLOW (RAZORPAY)
+      // ==========================================
+      if (!paymentConfig || !paymentConfig.isEnabled) {
+        Alert.alert(
+          'Online Payment Unavailable',
+          'Online payments are currently unavailable for this store. Please select Cash on Delivery.'
         );
+        setSelectedPayment('cod');
+        return;
+      }
+
+      const keyValidation = paymentService.validateKeyPrefix(
+        paymentConfig.publicKeyId,
+        paymentConfig.mode
+      );
+      if (!keyValidation.isValid) {
+        Alert.alert(
+          'Payment Gateway Configuration Error',
+          keyValidation.error || 'Invalid payment credentials configured on server.'
+        );
+        return;
+      }
+
+      // 1. Prepare checkout session items
+      const sessionItems: CheckoutSessionItemDto[] = items.map((i) => ({
+        productID: parseInt(i.productId, 10),
+        productVariantID: parseInt(i.variantId || (i.variant?.id ?? '0'), 10),
+        productName: i.product.name,
+        variantLabel: i.variant?.name || 'Standard',
+        price: Number(i.price),
+        quantity: i.quantity,
+        total: Number((Number(i.price) * i.quantity).toFixed(2)),
+      }));
+
+      // 2. Create payment-first checkout session (OrderMaster is NOT created here)
+      const session = await paymentService.createCheckoutSession({
+        storeID: Number(currentStoreId),
+        addressId: parseInt(selectedAddress.id, 10),
+        items: sessionItems,
+        clientGrandTotal: summary.total,
+        clientAmountInPaise: Math.round(summary.total * 100),
+        couponCode: summary.appliedCoupon?.code || null,
+      });
+
+      setActiveCheckoutSession(session);
+
+      // Validate runtime key consistency
+      const createdKeyVal = paymentService.validateKeyPrefix(
+        session.publicKeyId,
+        session.mode
+      );
+      if (!createdKeyVal.isValid) {
+        throw new Error(createdKeyVal.error || 'Invalid public key received from checkout session.');
+      }
+
+      // 3. Prepare Razorpay Options
+      const options: RazorpayCheckoutOptions = {
+        key: session.publicKeyId,
+        amount: session.amountInPaise,
+        currency: session.currency || 'INR',
+        name: 'FreshMart',
+        description: `Order Checkout (${session.attemptToken.substring(0, 8)})`,
+        order_id: session.razorpayOrderId,
+        prefill: {
+          name: user?.name || selectedAddress.name || '',
+          contact: user?.phone || selectedAddress.phone || '',
+          email: user?.email || '',
+        },
+        theme: {
+          color: '#059669',
+        },
+      };
+
+      // 4. Launch Razorpay
+      if (isNativeRazorpayAvailable()) {
+        try {
+          const nativeRes = await openNativeRazorpayCheckout(options);
+          await handlePaymentSuccess(nativeRes, session);
+        } catch (err: any) {
+          await handlePaymentError(err, session);
+        }
+      } else {
+        setActiveCheckoutOptions(options);
+        setCheckoutModalVisible(true);
+        // Release placing flag so modal interactions are active
+        setIsPlacingOrder(false);
+        isSubmittingRef.current = false;
       }
     } catch (e: any) {
-      console.warn('Failed to place order:', e);
-      Alert.alert(
-        'Order Failed',
-        e?.message || 'Failed to place your order. Please try again. Your cart has been preserved.'
-      );
-    } finally {
+      sanitizeDevLog('CheckoutScreen.initiateSession', e);
       setIsPlacingOrder(false);
+      isSubmittingRef.current = false;
+      Alert.alert(
+        'Checkout Failed',
+        getSafeUserErrorMessage(e, 'checkout')
+      );
     }
   };
+
+  const isOnlineSelected = selectedPayment !== 'cod';
+  const isOnlineDisabled = !paymentConfig || !paymentConfig.isEnabled;
+  const modeBadge =
+    paymentConfig?.isEnabled && paymentConfig.mode.toLowerCase() === 'test'
+      ? 'Test Mode'
+      : undefined;
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
@@ -169,7 +552,12 @@ export const CheckoutScreen: React.FC = () => {
       />
 
       {/* Stepper Header Tabs */}
-      <View style={[styles.stepperContainer, { backgroundColor: theme.colors.surface, borderColor: theme.colors.borderLight }]}>
+      <View
+        style={[
+          styles.stepperContainer,
+          { backgroundColor: theme.colors.surface, borderColor: theme.colors.borderLight },
+        ]}
+      >
         {STEPS.map((step) => {
           const isDone = step.id < currentStep;
           const isCurrent = step.id === currentStep;
@@ -214,7 +602,11 @@ export const CheckoutScreen: React.FC = () => {
                 style={[
                   styles.stepTitle,
                   {
-                    color: isCurrent ? theme.colors.primaryDarker : isDone ? theme.colors.textPrimary : theme.colors.textMuted,
+                    color: isCurrent
+                      ? theme.colors.primaryDarker
+                      : isDone
+                      ? theme.colors.textPrimary
+                      : theme.colors.textMuted,
                     fontWeight: isCurrent ? '700' : '500',
                   },
                 ]}
@@ -307,16 +699,12 @@ export const CheckoutScreen: React.FC = () => {
                       },
                     ]}
                   >
-                    {addr.name} • {addr.phone}
+                    {addr.name} - {addr.phone}
                   </Text>
-
                   <Text
                     style={[
                       styles.addrDetails,
-                      {
-                        color: theme.colors.textSecondary,
-                        fontSize: theme.typography.size.xs,
-                      },
+                      { color: theme.colors.textSecondary, fontSize: theme.typography.size.xs },
                     ]}
                   >
                     {addr.doorFlat}, {addr.street}, {addr.area}, {addr.city} - {addr.pincode}
@@ -327,67 +715,41 @@ export const CheckoutScreen: React.FC = () => {
           </View>
         )}
 
-        {/* STEP 2: DELIVERY SLOT */}
-        {/* {currentStep === 2 && (
-          <View style={styles.stepSection}>
-            <Text
-              style={[
-                styles.sectionHeading,
-                {
-                  color: theme.colors.textPrimary,
-                  fontSize: theme.typography.size.md,
-                  fontWeight: theme.typography.weight.bold,
-                  marginBottom: 12,
-                },
-              ]}
-            >
-              Choose Delivery Slot
-            </Text>
-
-            <DeliverySlotPicker
-              slots={deliverySlots}
-              selectedSlotId={selectedSlot.id}
-              onSelectSlot={(slot) => setSelectedSlot(slot)}
-            />
-          </View>
-        )} */}
-
-        {/* STEP 3: PAYMENT METHOD */}
+        {/* STEP 2: PAYMENT METHOD SELECTION */}
         {currentStep === 2 && (
           <View style={styles.stepSection}>
-            <Text
-              style={[
-                styles.sectionHeading,
-                {
-                  color: theme.colors.textPrimary,
-                  fontSize: theme.typography.size.md,
-                  fontWeight: theme.typography.weight.bold,
-                  marginBottom: 12,
-                },
-              ]}
-            >
-              Select Payment Method
-            </Text>
+            <View style={styles.sectionTitleRow}>
+              <Text
+                style={[
+                  styles.sectionHeading,
+                  {
+                    color: theme.colors.textPrimary,
+                    fontSize: theme.typography.size.md,
+                    fontWeight: theme.typography.weight.bold,
+                    marginBottom: 4,
+                  },
+                ]}
+              >
+                Select Payment Method
+              </Text>
+
+              {isLoadingPaymentConfig && (
+                <ActivityIndicator size="small" color={theme.colors.primary} />
+              )}
+            </View>
 
             <PaymentMethodPicker
               methods={paymentMethods}
               selectedMethod={selectedPayment}
-              onSelectMethod={(m) => {
-                if (m !== 'cod') {
-                  Alert.alert(
-                    'Payment Unavailable',
-                    'Online payment is currently unavailable. Please choose Cash on Delivery.'
-                  );
-                  setSelectedPayment('cod');
-                } else {
-                  setSelectedPayment(m);
-                }
-              }}
+              onSelectMethod={(m) => setSelectedPayment(m)}
+              isOnlineDisabled={isOnlineDisabled}
+              onlineDisabledMessage="Online payments are currently unavailable. Please choose Cash on Delivery."
+              modeBadge={modeBadge}
             />
           </View>
         )}
 
-        {/* STEP 4: ORDER REVIEW & SUMMARY */}
+        {/* STEP 3: ORDER REVIEW & SUMMARY */}
         {currentStep === 3 && (
           <View style={styles.stepSection}>
             <Text
@@ -404,7 +766,7 @@ export const CheckoutScreen: React.FC = () => {
               Review Your Order
             </Text>
 
-            {/* Address & Slot summary card */}
+            {/* Address & Payment summary card */}
             <View
               style={[
                 styles.summaryMetaCard,
@@ -430,26 +792,17 @@ export const CheckoutScreen: React.FC = () => {
 
               <View style={[styles.summaryDivider, { backgroundColor: theme.colors.borderLight }]} />
 
-              {/* <View style={styles.summaryMetaRow}>
-                <Ionicons name="time-outline" size={18} color={theme.colors.secondary} />
-                <View style={{ marginLeft: 10, flex: 1 }}>
-                  <Text style={[styles.summaryMetaTitle, { color: theme.colors.textPrimary }]}>
-                    Delivery Slot: {selectedSlot.dateLabel}
-                  </Text>
-                  <Text style={[styles.summaryMetaSub, { color: theme.colors.textSecondary }]}>
-                    {selectedSlot.timeWindow}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={[styles.summaryDivider, { backgroundColor: theme.colors.borderLight }]} /> */}
-
               <View style={styles.summaryMetaRow}>
                 <Ionicons name="card-outline" size={18} color={theme.colors.primary} />
-                <View style={{ marginLeft: 10, flex: 1 }}>
+                <View style={{ marginLeft: 10, flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                   <Text style={[styles.summaryMetaTitle, { color: theme.colors.textPrimary }]}>
-                    Payment: {paymentMethods.find((p) => p.id === selectedPayment)?.title}
+                    Payment: {paymentMethods.find((p) => p.id === selectedPayment)?.title || selectedPayment.toUpperCase()}
                   </Text>
+                  {isOnlineSelected && modeBadge && (
+                    <View style={styles.summaryBadge}>
+                      <Text style={styles.summaryBadgeText}>{modeBadge}</Text>
+                    </View>
+                  )}
                 </View>
               </View>
             </View>
@@ -492,15 +845,31 @@ export const CheckoutScreen: React.FC = () => {
 
         <View style={styles.btnBox}>
           <AppButton
-            title={currentStep === 3 ? 'Place Order' : 'Continue'}
+            title={
+              isRecoveringStatus
+                ? 'Confirming Status...'
+                : isVerifyingPayment
+                ? 'Verifying Payment...'
+                : isPlacingOrder
+                ? 'Processing...'
+                : currentStep === 3
+                ? isOnlineSelected
+                  ? 'Proceed to Pay'
+                  : 'Place Order (COD)'
+                : 'Continue'
+            }
             onPress={handleNextStep}
-            loading={isPlacingOrder}
-            disabled={isPlacingOrder}
+            loading={isPlacingOrder || isVerifyingPayment || isRecoveringStatus}
+            disabled={isPlacingOrder || isVerifyingPayment || isRecoveringStatus}
             size="lg"
             variant="primary"
             rightIcon={
               currentStep === 3 ? (
-                <Ionicons name="checkmark-circle" size={18} color="#FFF" />
+                <Ionicons
+                  name={isOnlineSelected ? 'shield-checkmark' : 'checkmark-circle'}
+                  size={18}
+                  color="#FFF"
+                />
               ) : (
                 <Ionicons name="arrow-forward" size={18} color="#FFF" />
               )
@@ -515,6 +884,27 @@ export const CheckoutScreen: React.FC = () => {
         onClose={() => setAddressModalVisible(false)}
         onSubmit={async (data) => {
           await addAddress(data);
+        }}
+      />
+
+      {/* Dual-Engine Razorpay In-App Checkout Modal */}
+      <RazorpayCheckoutModal
+        visible={checkoutModalVisible}
+        options={activeCheckoutOptions}
+        onSuccess={(data) => {
+          if (activeCheckoutSession) {
+            handlePaymentSuccess(data, activeCheckoutSession);
+          }
+        }}
+        onError={(err) => {
+          if (activeCheckoutSession) {
+            handlePaymentError(err, activeCheckoutSession);
+          }
+        }}
+        onClose={() => {
+          setCheckoutModalVisible(false);
+          setIsPlacingOrder(false);
+          isSubmittingRef.current = false;
         }}
       />
     </View>
@@ -634,6 +1024,20 @@ const styles = StyleSheet.create({
   summaryMetaSub: {
     fontSize: 11,
     marginTop: 2,
+  },
+  summaryBadge: {
+    backgroundColor: '#FEF3C7',
+    borderColor: '#F59E0B',
+    borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  summaryBadgeText: {
+    color: '#B45309',
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
   },
   bottomBar: {
     position: 'absolute',

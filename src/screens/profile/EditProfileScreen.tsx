@@ -19,6 +19,7 @@ import { AppButton } from '../../components/common/AppButton';
 import { ToastMessage } from '../../components/feedback/ToastMessage';
 import { isValidPhone, isValidEmail, isNotEmpty } from '../../utils/validators';
 import { SafeImage, isValidImageUri } from '../../components/common/SafeImage';
+import { getSafeUserErrorMessage, sanitizeDevLog } from '../../utils/apiError';
 
 const AVATAR_OPTIONS = [
   'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&auto=format&fit=crop&q=80',
@@ -68,7 +69,8 @@ export const EditProfileScreen: React.FC = () => {
         navigation.goBack();
       }, 1000);
     } catch (e: any) {
-      setErrors({ form: e.message || 'Failed to update profile' });
+      sanitizeDevLog('EditProfileScreen.handleSave', e);
+      setErrors({ form: getSafeUserErrorMessage(e, 'profile') });
     } finally {
       setSaving(false);
     }

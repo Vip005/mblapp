@@ -6,14 +6,17 @@ import {
   Product,
   ProductVariant,
   BackendCartMaster,
+  StorePricingConfigDto,
 } from '../types';
 import { cartService } from '../services/api/cartService';
 import { couponService } from '../services/api/couponService';
 import { productService } from '../services/api/productService';
+import { storeService } from '../services/api/storeService';
 import { useAuth } from '../hooks/useAuth';
 import { useStore } from '../hooks/useStore';
 import { storage, STORAGE_KEYS } from '../utils/storage';
 import { resolveImageUrl } from '../services/api/adapters';
+import { getSafeUserErrorMessage, sanitizeDevLog } from '../utils/apiError';
 
 interface CartContextType {
   items: CartItem[];
@@ -21,6 +24,7 @@ interface CartContextType {
   itemCount: number;
   cartStoreId: number | null;
   activeCartMaster: BackendCartMaster | null;
+  storePricingConfig: StorePricingConfigDto | null;
   appliedCoupon: Coupon | null;
   isLoading: boolean;
   addItem: (product: Product, variant?: ProductVariant, quantity?: number) => Promise<void>;
@@ -56,6 +60,7 @@ export const CartContext = createContext<CartContextType>({
   itemCount: 0,
   cartStoreId: null,
   activeCartMaster: null,
+  storePricingConfig: null,
   appliedCoupon: null,
   isLoading: false,
   addItem: async () => {},
@@ -77,6 +82,7 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
 
   const [items, setItems] = useState<CartItem[]>([]);
   const [activeCartMaster, setActiveCartMaster] = useState<BackendCartMaster | null>(null);
+  const [storePricingConfig, setStorePricingConfig] = useState<StorePricingConfigDto | null>(null);
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
@@ -113,7 +119,7 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
     try {
       // 1. Fetch or create backend CartMaster for this (customerId, selectedStoreId)
       const cartMaster = await cartService.getOrCreateCartMaster(currentCustomerId, selectedStoreId);
-      if (!cartMaster) {
+      if (!cartMaster || !cartMaster.cartID || cartMaster.cartID <= 0) {
         setItems([]);
         setActiveCartMaster(null);
         return;
@@ -209,6 +215,31 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [currentCustomerId, selectedStoreId]);
 
+  // Dynamic store pricing configuration for selectedStoreId
+  useEffect(() => {
+    let isCancelled = false;
+    if (selectedStoreId && selectedStoreId > 0) {
+      storeService
+        .getStorePricingConfig(selectedStoreId)
+        .then((cfg) => {
+          if (!isCancelled) {
+            setStorePricingConfig(cfg);
+          }
+        })
+        .catch((err) => {
+          console.warn('[CartContext] Failed to load store pricing config:', err);
+          if (!isCancelled) {
+            setStorePricingConfig(null);
+          }
+        });
+    } else {
+      setStorePricingConfig(null);
+    }
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedStoreId]);
+
   // Re-sync authoritative cart whenever customer or store changes
   useEffect(() => {
     setItems([]);
@@ -226,10 +257,10 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [items, isInitialized, currentCustomerId, selectedStoreId]);
 
-  // Dynamic summary calculation driven by CartMaster backend values
+  // Dynamic summary calculation driven by dynamic store pricing config & CartMaster backend values
   const summary = useMemo(() => {
-    return cartService.calculateSummary(items, appliedCoupon, activeCartMaster);
-  }, [items, appliedCoupon, activeCartMaster]);
+    return cartService.calculateSummary(items, appliedCoupon, activeCartMaster, storePricingConfig);
+  }, [items, appliedCoupon, activeCartMaster, storePricingConfig]);
 
   // Cart badge: SUM of all CartItem quantities
   const itemCount = useMemo(() => {
@@ -274,21 +305,23 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
         throw new Error('Please select a store to add items to your cart.');
       }
 
-      // Ensure active CartMaster exists
+      // Ensure active CartMaster exists and has a valid ID > 0 matching customer and store
       let cartMaster = activeCartMaster;
       if (
         !cartMaster ||
+        !cartMaster.cartID ||
+        cartMaster.cartID <= 0 ||
         Number(cartMaster.customerId) !== Number(currentCustomerId) ||
         Number(cartMaster.storeID) !== Number(selectedStoreId)
       ) {
         cartMaster = await cartService.getOrCreateCartMaster(currentCustomerId, selectedStoreId);
-        if (cartMaster) {
+        if (cartMaster && cartMaster.cartID > 0) {
           setActiveCartMaster(cartMaster);
         }
       }
 
-      if (!cartMaster) {
-        throw new Error('Failed to obtain CartMaster from server.');
+      if (!cartMaster || !cartMaster.cartID || cartMaster.cartID <= 0) {
+        throw new Error('Failed to obtain a valid Cart from server.');
       }
 
       const prodId = parseInt(product.id, 10);
@@ -303,52 +336,96 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
       let backendCartId: number = cartMaster.cartID;
       let finalQty = quantity;
 
-      if (existingItem && existingItem.backendCartItemId) {
-        // Existing item: PUT update quantity
-        finalQty = existingItem.quantity + quantity;
-        await cartService.updateCartItem(
-          existingItem.backendCartItemId,
-          cartMaster.cartID,
-          varId,
-          prodId,
-          finalQty,
-          price
-        );
-        backendCartItemId = existingItem.backendCartItemId;
-      } else {
-        // Check if item already exists on backend to avoid duplicate rows
-        const backendItems = await cartService.getCartItems(cartMaster.cartID);
-        const duplicateOnBackend = backendItems.find(
-          (b) => Number(b.productID) === prodId && Number(b.productVariantID) === varId
-        );
+      // Resilient execution wrapper: catches 404 (stale/deleted cart on server),
+      // evicts stale cart, recreates a fresh authoritative cart, and retries once transparently.
+      const executeWithCartRetry = async () => {
+        try {
+          if (existingItem && existingItem.backendCartItemId) {
+            finalQty = existingItem.quantity + quantity;
+            await cartService.updateCartItem(
+              existingItem.backendCartItemId,
+              cartMaster!.cartID,
+              varId,
+              prodId,
+              finalQty,
+              price
+            );
+            backendCartItemId = existingItem.backendCartItemId;
+            backendCartId = cartMaster!.cartID;
+          } else {
+            const backendItems = await cartService.getCartItems(cartMaster!.cartID);
+            const duplicateOnBackend = backendItems.find(
+              (b) => Number(b.productID) === prodId && Number(b.productVariantID) === varId
+            );
 
-        if (duplicateOnBackend) {
-          finalQty = duplicateOnBackend.quantity + quantity;
-          await cartService.updateCartItem(
-            duplicateOnBackend.cartItemID,
-            cartMaster.cartID,
-            varId,
-            prodId,
-            finalQty,
-            price
-          );
-          backendCartItemId = duplicateOnBackend.cartItemID;
-        } else {
-          // New item: POST add item
-          const createdBackendItem = await cartService.addCartItem(
-            cartMaster.cartID,
-            varId,
-            prodId,
-            quantity,
-            price
-          );
-          if (!createdBackendItem) {
-            throw new Error(`Failed to add ${product.name} to cart.`);
+            if (duplicateOnBackend) {
+              finalQty = duplicateOnBackend.quantity + quantity;
+              await cartService.updateCartItem(
+                duplicateOnBackend.cartItemID,
+                cartMaster!.cartID,
+                varId,
+                prodId,
+                finalQty,
+                price
+              );
+              backendCartItemId = duplicateOnBackend.cartItemID;
+              backendCartId = cartMaster!.cartID;
+            } else {
+              const createdBackendItem = await cartService.addCartItem(
+                cartMaster!.cartID,
+                varId,
+                prodId,
+                quantity,
+                price
+              );
+              if (!createdBackendItem || !createdBackendItem.cartItemID) {
+                throw new Error(`Failed to add ${product.name} to cart.`);
+              }
+              backendCartItemId = createdBackendItem.cartItemID;
+              backendCartId = createdBackendItem.cartID || cartMaster!.cartID;
+            }
           }
-          backendCartItemId = createdBackendItem.cartItemID;
-          backendCartId = createdBackendItem.cartID;
+        } catch (opErr: any) {
+          const isNotFound =
+            opErr?.statusCode === 404 ||
+            (typeof opErr?.message === 'string' &&
+              (opErr.message.includes('not found') ||
+                opErr.message.includes('404') ||
+                opErr.message.toLowerCase().includes('cart')));
+
+          if (isNotFound) {
+            console.warn('[CartContext.addItem] Stale cart detected on backend. Recreating fresh cart and retrying...');
+            cartService.clearInFlightCartMaster(currentCustomerId, selectedStoreId);
+            setActiveCartMaster(null);
+
+            const freshCart = await cartService.getOrCreateCartMaster(currentCustomerId, selectedStoreId, true);
+            if (!freshCart || !freshCart.cartID || freshCart.cartID <= 0) {
+              throw opErr;
+            }
+            cartMaster = freshCart;
+            setActiveCartMaster(freshCart);
+            backendCartId = freshCart.cartID;
+
+            // Retrying item add with fresh cart
+            const created = await cartService.addCartItem(
+              freshCart.cartID,
+              varId,
+              prodId,
+              quantity,
+              price
+            );
+            if (!created || !created.cartItemID) {
+              throw opErr;
+            }
+            backendCartItemId = created.cartItemID;
+            backendCartId = created.cartID || freshCart.cartID;
+            return;
+          }
+          throw opErr;
         }
-      }
+      };
+
+      await executeWithCartRetry();
 
       // Update local cart state strictly AFTER backend confirmation
       setItems((prev) => {
@@ -419,50 +496,89 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
       let cartMaster = activeCartMaster;
       if (
         !cartMaster ||
+        !cartMaster.cartID ||
+        cartMaster.cartID <= 0 ||
         Number(cartMaster.customerId) !== Number(currentCustomerId) ||
         Number(cartMaster.storeID) !== Number(selectedStoreId)
       ) {
         cartMaster = await cartService.getOrCreateCartMaster(currentCustomerId, selectedStoreId);
-        if (cartMaster) setActiveCartMaster(cartMaster);
+        if (cartMaster && cartMaster.cartID > 0) setActiveCartMaster(cartMaster);
       }
 
-      if (!cartMaster) throw new Error('Missing CartMaster');
+      if (!cartMaster || !cartMaster.cartID || cartMaster.cartID <= 0) throw new Error('Missing CartMaster');
 
       let backendItemId = targetItem.backendCartItemId;
       const prodId = parseInt(targetItem.productId, 10) || 1;
       const varId = parseInt(targetItem.variantId, 10) || 1;
 
-      if (!backendItemId) {
-        const backendItems = await cartService.getCartItems(cartMaster.cartID);
-        const match = backendItems.find(
-          (b) => Number(b.productID) === prodId && Number(b.productVariantID) === varId
-        );
-        if (match) {
-          backendItemId = match.cartItemID;
-        }
-      }
+      const executeUpdateWithRetry = async () => {
+        try {
+          if (!backendItemId) {
+            const backendItems = await cartService.getCartItems(cartMaster!.cartID);
+            const match = backendItems.find(
+              (b) => Number(b.productID) === prodId && Number(b.productVariantID) === varId
+            );
+            if (match) {
+              backendItemId = match.cartItemID;
+            }
+          }
 
-      if (backendItemId) {
-        await cartService.updateCartItem(
-          backendItemId,
-          cartMaster.cartID,
-          varId,
-          prodId,
-          quantity,
-          targetItem.price
-        );
-      } else {
-        const created = await cartService.addCartItem(
-          cartMaster.cartID,
-          varId,
-          prodId,
-          quantity,
-          targetItem.price
-        );
-        if (created) {
-          backendItemId = created.cartItemID;
+          if (backendItemId) {
+            await cartService.updateCartItem(
+              backendItemId,
+              cartMaster!.cartID,
+              varId,
+              prodId,
+              quantity,
+              targetItem.price
+            );
+          } else {
+            const created = await cartService.addCartItem(
+              cartMaster!.cartID,
+              varId,
+              prodId,
+              quantity,
+              targetItem.price
+            );
+            if (created) {
+              backendItemId = created.cartItemID;
+            }
+          }
+        } catch (opErr: any) {
+          const isNotFound =
+            opErr?.statusCode === 404 ||
+            (typeof opErr?.message === 'string' &&
+              (opErr.message.includes('not found') ||
+                opErr.message.includes('404') ||
+                opErr.message.toLowerCase().includes('cart')));
+
+          if (isNotFound) {
+            console.warn('[CartContext.updateQuantity] Stale cart detected. Recreating fresh cart and retrying...');
+            cartService.clearInFlightCartMaster(currentCustomerId, selectedStoreId);
+            setActiveCartMaster(null);
+
+            const freshCart = await cartService.getOrCreateCartMaster(currentCustomerId, selectedStoreId, true);
+            if (!freshCart || !freshCart.cartID || freshCart.cartID <= 0) throw opErr;
+            cartMaster = freshCart;
+            setActiveCartMaster(freshCart);
+
+            const created = await cartService.addCartItem(
+              freshCart.cartID,
+              varId,
+              prodId,
+              quantity,
+              targetItem.price
+            );
+            if (created) {
+              backendItemId = created.cartItemID;
+            }
+            return;
+          }
+          throw opErr;
         }
-      }
+      };
+
+      await executeUpdateWithRetry();
 
       // Update state strictly after backend confirmation
       setItems((prev) =>
@@ -565,19 +681,27 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const applyCoupon = async (code: string): Promise<{ success: boolean; message: string }> => {
-    const validation = await couponService.validateCoupon(code, summary.subtotal);
-    if (!validation.isValid || !validation.coupon) {
+    try {
+      const validation = await couponService.validateCoupon(code, summary.subtotal);
+      if (!validation.isValid || !validation.coupon) {
+        return {
+          success: false,
+          message: validation.error || 'Invalid coupon code',
+        };
+      }
+
+      setAppliedCoupon(validation.coupon);
+      return {
+        success: true,
+        message: `Coupon "${validation.coupon.code}" applied! You saved ₹${validation.discountAmount || 0}`,
+      };
+    } catch (err: any) {
+      sanitizeDevLog('CartContext.applyCoupon', err);
       return {
         success: false,
-        message: validation.error || 'Invalid coupon code',
+        message: getSafeUserErrorMessage(err, 'coupon'),
       };
     }
-
-    setAppliedCoupon(validation.coupon);
-    return {
-      success: true,
-      message: `Coupon "${validation.coupon.code}" applied! You saved ₹${validation.discountAmount || 0}`,
-    };
   };
 
   const removeCoupon = () => {
@@ -598,6 +722,12 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const refreshCart = async () => {
+    if (selectedStoreId && selectedStoreId > 0) {
+      storeService
+        .getStorePricingConfig(selectedStoreId, true)
+        .then(setStorePricingConfig)
+        .catch(() => {});
+    }
     await loadAuthoritativeCart();
   };
 
@@ -609,6 +739,7 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
         itemCount,
         cartStoreId,
         activeCartMaster,
+        storePricingConfig,
         appliedCoupon,
         isLoading,
         addItem,

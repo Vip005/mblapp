@@ -129,6 +129,8 @@ export interface CartSummary {
   appliedCoupon: Coupon | null;
   freeDeliveryThreshold: number;
   freeDeliveryRemaining: number;
+  freePlatformFeeThreshold?: number;
+  freePlatformFeeRemaining?: number;
 }
 
 export type AddressType = 'Home' | 'Work' | 'Other';
@@ -171,13 +173,16 @@ export interface DeliverySlot {
   isAvailable: boolean;
 }
 
-export type PaymentMethodType = 'cod' | 'upi' | 'card' | 'wallet';
+export type PaymentMethodType = 'cod' | 'upi' | 'card' | 'wallet' | 'razorpay' | 'online';
 
 export interface PaymentMethodOption {
   id: PaymentMethodType;
   title: string;
   description: string;
   icon: string;
+  badge?: string;
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 export type OrderStatus =
@@ -219,11 +224,15 @@ export interface Order {
   discount: number;
   couponDiscount: number;
   deliveryCharge: number;
+  platformFee?: number;
   tax: number;
   total: number;
   address: Address;
   // deliverySlot: DeliverySlot;
   paymentMethod: PaymentMethodType;
+  paymentMode?: string;
+  paymentStatus?: 'Pending' | 'Paid' | 'Failed' | string;
+  razorpayOrderId?: string;
   appliedCoupon?: Coupon | null;
   trackingSteps: OrderStatusStep[];
   // estimatedDelivery: string;
@@ -423,3 +432,221 @@ export type MainTabParamList = {
   OrdersTab: undefined;
   ProfileTab: undefined;
 };
+
+// ==========================================
+// Razorpay Payment Gateway Types & DTOs
+// ==========================================
+
+export interface PaymentPublicConfigDto {
+  gateway: string;
+  mode: 'Test' | 'Live' | string;
+  isEnabled: boolean;
+  publicKeyId: string;
+  currency: string;
+}
+
+export interface CreatePaymentOrderRequestDto {
+  orderID: number;
+  clientAmount?: number;
+  clientAmountInPaise?: number;
+  forceNewAttempt?: boolean;
+}
+
+export interface CreatePaymentOrderResponseDto {
+  orderID: number;
+  orderNumber: string;
+  razorpayOrderId: string;
+  amount: number;
+  amountInPaise: number;
+  currency: string;
+  publicKeyId: string;
+  gateway: string;
+  mode: 'Test' | 'Live' | string;
+  attemptNumber: number;
+  paymentStatus: string;
+  isReusedOrder: boolean;
+}
+
+export interface VerifyPaymentRequestDto {
+  orderID: number;
+  razorpayOrderId: string;
+  razorpayPaymentId: string;
+  razorpaySignature: string;
+  amount?: number;
+  amountInPaise?: number;
+}
+
+export interface VerifyPaymentResponseDto {
+  orderID: number;
+  orderNumber: string;
+  orderStatus: string;
+  paymentStatus: string;
+  paymentMode: string;
+  razorpayOrderId: string;
+  razorpayPaymentId: string;
+  amount: number;
+  amountInPaise: number;
+  verifiedAt?: string;
+  isDuplicate: boolean;
+}
+
+export interface RecordPaymentFailureRequestDto {
+  orderID: number;
+  razorpayOrderId: string;
+  failureCode?: string;
+  failureReason?: string;
+}
+
+export interface OrderPaymentStatusResponseDto {
+  orderID: number;
+  orderNumber: string;
+  orderStatus: string;
+  paymentMode: string;
+  paymentStatus: string;
+  paymentTransactionID: string;
+  grandTotal: number;
+  amountInPaise: number;
+  currency: string;
+  latestRazorpayOrderId?: string;
+  latestAttemptStatus?: string;
+  attemptCount: number;
+  canRetryPayment: boolean;
+  verifiedAt?: string;
+}
+
+// ==========================================
+// Store Dynamic Pricing Configuration DTO
+// ==========================================
+
+export interface StorePricingConfigDto {
+  storePricingConfigurationID: number;
+  storeID: number;
+  deliveryCharge: number;
+  freeDeliveryAbove: number;
+  platformFee: number;
+  freePlatformFeeAbove: number;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string | null;
+}
+
+// ==========================================
+// Payment-First Checkout Architecture DTOs
+// ==========================================
+
+export interface CheckoutSessionItemDto {
+  orderItemID?: number;
+  orderID?: number;
+  productID: number;
+  productVariantID: number;
+  productName: string;
+  variantLabel?: string;
+  price: number;
+  quantity: number;
+  total: number;
+  createdDate?: string;
+  discount?: number;
+  tax?: number;
+}
+
+export interface CheckoutSessionCreateRequestDto {
+  storeID: number;
+  addressId: number;
+  items: CheckoutSessionItemDto[];
+  clientGrandTotal?: number;
+  clientAmountInPaise?: number;
+  customerNotes?: string | null;
+  deliverySlotId?: string | null;
+  deliveryDateLabel?: string | null;
+  deliveryTimeWindow?: string | null;
+  couponCode?: string | null;
+}
+
+export interface CheckoutSessionCreateResponseDto {
+  attemptToken: string;
+  razorpayOrderId: string;
+  amountInPaise: number;
+  grandTotal: number;
+  itemTotal: number;
+  deliveryFee: number;
+  platformFee: number;
+  taxes: number;
+  discountTotal: number;
+  couponCode?: string | null;
+  currency: string;
+  publicKeyId: string;
+  gateway: string;
+  mode: string;
+  expiresAt: string;
+}
+
+export interface CheckoutPaymentVerifyRequestDto {
+  attemptToken: string;
+  razorpayOrderId: string;
+  razorpayPaymentId: string;
+  razorpaySignature: string;
+}
+
+export type CheckoutAttemptStatusType =
+  | 'PaymentProcessing'
+  | 'OrderCreated'
+  | 'PaymentFailed'
+  | 'Expired'
+  | 'ReconciliationRequired'
+  | 'Refunded'
+  | string;
+
+export interface CheckoutPaymentVerifyResponseDto {
+  isSuccess: boolean;
+  status: CheckoutAttemptStatusType;
+  orderID?: number | null;
+  orderNumber?: string | null;
+  message?: string | null;
+  isDuplicate: boolean;
+  orderDetails?: {
+    order: any;
+    items: any[];
+  } | null;
+  amountInPaise: number;
+  verifiedAt?: string | null;
+}
+
+export interface CheckoutPaymentFailureRequestDto {
+  attemptToken: string;
+  razorpayOrderId: string;
+  failureCode?: string | null;
+  failureReason?: string | null;
+}
+
+export interface CheckoutPaymentFailureResponseDto {
+  success: boolean;
+  status: string;
+  message: string;
+}
+
+export interface CheckoutAttemptStatusResponseDto {
+  checkoutAttemptID: number;
+  attemptToken: string;
+  status: CheckoutAttemptStatusType;
+  customerId: number;
+  storeID: number;
+  addressId: number;
+  razorpayOrderId: string;
+  razorpayPaymentId?: string | null;
+  grandTotal: number;
+  amountInPaise: number;
+  currency: string;
+  orderID?: number | null;
+  orderNumber?: string | null;
+  failureCode?: string | null;
+  failureReason?: string | null;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+  orderDetails?: {
+    order: any;
+    items: any[];
+  } | null;
+}
+
+

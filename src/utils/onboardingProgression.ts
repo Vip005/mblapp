@@ -48,7 +48,20 @@ export async function determineNextAppRoute(user: User | null): Promise<AppProgr
 
   if (isCompleted) {
     if (selectedStoreId && selectedStoreId > 0) {
-      return { type: 'MAIN' };
+      // Rule 5: Validate that the selected store is actually active
+      const resolution = await storeService.validateAndResolveSelectedStore().catch(() => null);
+      if (resolution?.selectedStore) {
+        return { type: 'MAIN' };
+      }
+      if (resolution && resolution.activeStores.length === 1) {
+        return { type: 'MAIN' };
+      }
+    } else {
+      // Completed onboarding before, but no store selected: check if exactly 1 store is available
+      const resolution = await storeService.validateAndResolveSelectedStore().catch(() => null);
+      if (resolution?.selectedStore && resolution.activeStores.length === 1) {
+        return { type: 'MAIN' };
+      }
     }
     return { type: 'AUTH_STEP', screen: 'StoreSelection' };
   }
@@ -85,8 +98,10 @@ export async function determineNextAppRoute(user: User | null): Promise<AppProgr
   }
 
   // 4. Selected Store check:
-  const currentStoreId = selectedStoreId || (await storeService.getSelectedStoreId());
-  if (!currentStoreId || currentStoreId <= 0) {
+  // Validate and resolve selected store (auto-selects if exactly 1 active store exists)
+  const resolution = await storeService.validateAndResolveSelectedStore().catch(() => null);
+  const currentStore = resolution?.selectedStore;
+  if (!currentStore || currentStore.id <= 0) {
     return { type: 'AUTH_STEP', screen: 'StoreSelection' };
   }
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,7 @@ import { PriceDisplay } from '../common/PriceDisplay';
 import { RatingStars } from '../common/RatingStars';
 import { QuantitySelector } from './QuantitySelector';
 import { SafeImage } from '../common/SafeImage';
+import { getSafeUserErrorMessage, sanitizeDevLog } from '../../utils/apiError';
 
 export type ProductCardVariant = 'grid' | 'horizontal' | 'list';
 
@@ -41,6 +42,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
   const [imgError, setImgError] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
+  const isAddingRef = useRef(false);
+
   const activeVariant: ProductVariant =
     product.variants && product.variants.length > 0
       ? product.variants[0]
@@ -77,20 +80,24 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   };
 
   const handleAddToCart = async () => {
-    if (isOutOfStock || isPending) return;
+    if (isOutOfStock || isPending || isAddingRef.current) return;
     try {
+      isAddingRef.current = true;
       setIsAdding(true);
       await addItem(product, activeVariant, 1);
     } catch (e: any) {
-      Alert.alert('Cart Error', e?.message || 'Failed to add item to cart.');
+      sanitizeDevLog('ProductCard.handleAddToCart', e);
+      Alert.alert('Cart Error', getSafeUserErrorMessage(e, 'cart'));
     } finally {
+      isAddingRef.current = false;
       setIsAdding(false);
     }
   };
 
   const handleIncrement = async () => {
-    if (isOutOfStock || isPending) return;
+    if (isOutOfStock || isPending || isAddingRef.current) return;
     try {
+      isAddingRef.current = true;
       setIsAdding(true);
       if (cartItem) {
         if (quantity >= availableStock) return;
@@ -99,21 +106,26 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         await addItem(product, activeVariant, 1);
       }
     } catch (e: any) {
-      Alert.alert('Cart Error', e?.message || 'Failed to update item quantity.');
+      sanitizeDevLog('ProductCard.handleIncrement', e);
+      Alert.alert('Cart Error', getSafeUserErrorMessage(e, 'cart'));
     } finally {
+      isAddingRef.current = false;
       setIsAdding(false);
     }
   };
 
   const handleDecrement = async () => {
-    if (isPending) return;
+    if (isPending || isAddingRef.current) return;
     if (cartItem) {
       try {
+        isAddingRef.current = true;
         setIsAdding(true);
         await updateQuantity(cartItem.id, quantity - 1);
       } catch (e: any) {
-        Alert.alert('Cart Error', e?.message || 'Failed to update item quantity.');
+        sanitizeDevLog('ProductCard.handleDecrement', e);
+        Alert.alert('Cart Error', getSafeUserErrorMessage(e, 'cart'));
       } finally {
+        isAddingRef.current = false;
         setIsAdding(false);
       }
     }
@@ -404,9 +416,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({
               sellingPrice={activeVariant.price}
               originalPrice={activeVariant.originalPrice}
               size="sm"
+              layout="vertical"
               showDiscountBadge={false}
+              style={styles.priceColumn}
             />
-            {renderCartAction()}
+            <View style={styles.actionBtnBox}>{renderCartAction()}</View>
           </View>
         </View>
       </TouchableOpacity>
@@ -489,7 +503,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             sellingPrice={activeVariant.price}
             originalPrice={activeVariant.originalPrice}
             size="sm"
+            layout="vertical"
             showDiscountBadge={false}
+            style={styles.priceColumn}
           />
           <View style={styles.actionBtnBox}>{renderCartAction()}</View>
         </View>
@@ -531,22 +547,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 8,
   },
+  priceColumn: {
+    flex: 1,
+    marginRight: 6,
+    justifyContent: 'center',
+  },
   actionBtnBox: {
-    minWidth: 70,
+    flexShrink: 0,
     alignItems: 'flex-end',
+    justifyContent: 'center',
   },
 
   // Horizontal Styles
   horizontalCard: {
-    width: 155,
+    width: 168,
     borderWidth: 1,
-    overflow: 'hidden',
     marginRight: 12,
-    padding: 8,
+    padding: 10,
   },
   imageWrapper: {
     width: '100%',
-    height: 110,
+    height: 115,
     position: 'relative',
     backgroundColor: '#F1F5F9',
     borderRadius: 8,
@@ -637,13 +658,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 5,
-    paddingHorizontal: 12,
-    borderWidth: 1,
+    height: 32,
+    minWidth: 64,
+    maxWidth: 72,
+    paddingHorizontal: 8,
+    paddingVertical: 0,
+    borderWidth: 1.2,
   },
   addBtnText: {
     marginLeft: 2,
     letterSpacing: 0.5,
+    fontSize: 12,
+    fontWeight: '700',
   },
   outOfStockOverlay: {
     position: 'absolute',

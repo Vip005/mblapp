@@ -99,13 +99,13 @@ export const OrderSuccessScreen: React.FC = () => {
 
         {/* Actions */}
         <View style={styles.buttonsContainer}>
-          <AppButton
+          {/* <AppButton
             title="View Order Details"
             onPress={handleViewOrder}
             size="lg"
             variant="primary"
             style={{ marginBottom: 12 }}
-          />
+          /> */}
 
           <AppButton
             title="Continue Shopping"

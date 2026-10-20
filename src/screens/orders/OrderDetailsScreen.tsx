@@ -7,6 +7,7 @@ import {
   Image,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, RouteProp, useNavigation } from '@react-navigation/native';
@@ -23,9 +24,23 @@ import { ConfirmationModal } from '../../components/modals/ConfirmationModal';
 import { ToastMessage } from '../../components/feedback/ToastMessage';
 import { ErrorState } from '../../components/feedback/ErrorState';
 import { formatCurrency, formatDate } from '../../utils/formatters';
-import { orderHub, OrderStatusUpdatedEvent } from '../../services/realtime/orderHub';
+import { orderHub, OrderStatusUpdatedEvent, OrderPaymentUpdatedEvent } from '../../services/realtime/orderHub';
 import { mapBackendStatusToOrderStatus, getUpdatedTrackingSteps } from '../../services/api/adapters';
 import { orderService } from '../../services/api/orderService';
+import { paymentService } from '../../services/api/paymentService';
+import {
+  getSafeUserErrorMessage,
+  sanitizeDevLog,
+  isTechnicalOrUnsafeMessage,
+} from '../../utils/apiError';
+import {
+  isNativeRazorpayAvailable,
+  openNativeRazorpayCheckout,
+  RazorpayCheckoutOptions,
+  RazorpaySuccessResponse,
+  RazorpayErrorResponse,
+} from '../../services/payment/razorpayGateway';
+import { RazorpayCheckoutModal } from '../../components/payment/RazorpayCheckoutModal';
 
 export const OrderDetailsScreen: React.FC = () => {
   const { theme } = useTheme();
@@ -42,6 +57,13 @@ export const OrderDetailsScreen: React.FC = () => {
   const [cancelling, setCancelling] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Payment Retry State
+  const [isRetryingPayment, setIsRetryingPayment] = useState(false);
+  const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
+  const [checkoutModalVisible, setCheckoutModalVisible] = useState(false);
+  const [checkoutOptions, setCheckoutOptions] = useState<RazorpayCheckoutOptions | null>(null);
+  const [activeRazorpayOrderId, setActiveRazorpayOrderId] = useState<string>('');
+
   // Sync with context order when context updates without regressing authoritative totals
   useEffect(() => {
     if (contextOrder) {
@@ -57,13 +79,15 @@ export const OrderDetailsScreen: React.FC = () => {
               items: prev.items && prev.items.length > 0 ? prev.items : contextOrder.items,
               status: contextOrder.status,
               trackingSteps: contextOrder.trackingSteps,
+              paymentStatus: contextOrder.paymentStatus ?? prev.paymentStatus,
+              paymentMode: contextOrder.paymentMode ?? prev.paymentMode,
             }
           : contextOrder
       );
     }
   }, [contextOrder]);
 
-  // Initial REST fetch to guarantee authoritative and fresh order state
+  // Initial REST fetch to guarantee authoritative and fresh order state + payment status
   useEffect(() => {
     let isMounted = true;
 
@@ -74,11 +98,32 @@ export const OrderDetailsScreen: React.FC = () => {
         }
         const fetched = await orderService.getOrderById(orderId);
         if (isMounted && fetched) {
+          const numericId = Number(fetched.id || orderId);
+          const isOnline =
+            fetched.paymentMode === 'RAZORPAY' ||
+            fetched.paymentMethod === 'razorpay' ||
+            fetched.paymentMethod === 'online' ||
+            fetched.paymentMethod === 'upi' ||
+            fetched.paymentMethod === 'card';
+
+          if (!isNaN(numericId) && numericId > 0 && isOnline) {
+            try {
+              const paymentStatusRes = await paymentService.getOrderPaymentStatus(numericId);
+              if (paymentStatusRes.paymentStatus.toLowerCase() === 'paid') {
+                fetched.paymentStatus = 'Paid';
+                fetched.status = mapBackendStatusToOrderStatus(paymentStatusRes.orderStatus);
+                fetched.trackingSteps = getUpdatedTrackingSteps(fetched.status, fetched.trackingSteps);
+              }
+            } catch (pErr) {
+              console.warn('[OrderTracking] Failed to check payment status on load:', pErr);
+            }
+          }
+
           setOrder(fetched);
           updateOrder(fetched);
         }
       } catch (err: any) {
-        console.warn('[OrderTracking] Initial REST order fetch failed:', err?.message ?? err);
+        sanitizeDevLog('OrderDetailsScreen.loadAuthoritativeOrder', err);
       } finally {
         if (isMounted) {
           setIsLoadingOrder(false);
@@ -93,7 +138,7 @@ export const OrderDetailsScreen: React.FC = () => {
     };
   }, [orderId]);
 
-  // SignalR real-time updates lifecycle
+  // SignalR real-time updates lifecycle (order status & payment status)
   useEffect(() => {
     const rawTargetId = order?.id || orderId;
     const numericOrderId = Number(rawTargetId);
@@ -131,6 +176,29 @@ export const OrderDetailsScreen: React.FC = () => {
       );
     };
 
+    const handlePaymentUpdate = (event: OrderPaymentUpdatedEvent) => {
+      console.log('[OrderTracking] SignalR payment update:', event);
+
+      if (Number(event.orderId) !== numericOrderId) {
+        return;
+      }
+
+      if (event.paymentStatus.toLowerCase() === 'paid') {
+        setOrder((prev) => {
+          if (!prev) return prev;
+          const mappedStatus =
+            prev.status === 'Placed' || prev.status === 'Cancelled' ? 'Confirmed' : prev.status;
+          return {
+            ...prev,
+            paymentStatus: 'Paid',
+            status: mappedStatus,
+            trackingSteps: getUpdatedTrackingSteps(mappedStatus, prev.trackingSteps),
+          };
+        });
+        setToastMessage('Payment received and verified! Your order is confirmed.');
+      }
+    };
+
     let isSubscribed = true;
 
     const initSignalR = async () => {
@@ -139,6 +207,7 @@ export const OrderDetailsScreen: React.FC = () => {
         if (!isSubscribed) return;
 
         orderHub.onStatusUpdated(handleStatusUpdate);
+        orderHub.onPaymentUpdated(handlePaymentUpdate);
         await orderHub.joinOrder(numericOrderId);
       } catch (err: any) {
         console.warn('[OrderTracking] SignalR subscription error:', err?.message ?? err);
@@ -150,6 +219,7 @@ export const OrderDetailsScreen: React.FC = () => {
     return () => {
       isSubscribed = false;
       orderHub.offStatusUpdated(handleStatusUpdate);
+      orderHub.offPaymentUpdated(handlePaymentUpdate);
       orderHub.leaveOrder(numericOrderId).catch((err: any) => {
         console.warn('[OrderTracking] Failed to leave order group:', err?.message ?? err);
       });
@@ -180,7 +250,20 @@ export const OrderDetailsScreen: React.FC = () => {
     );
   }
 
-  const canCancel = order.status === 'Placed' || order.status === 'Confirmed';
+  const isOnlineOrder =
+    order.paymentMode?.toUpperCase() === 'RAZORPAY' ||
+    order.paymentMethod === 'razorpay' ||
+    order.paymentMethod === 'online' ||
+    order.paymentMethod === 'upi' ||
+    order.paymentMethod === 'card' ||
+    order.paymentMethod === 'wallet';
+
+  const isPaymentPaid = order.paymentStatus?.toLowerCase() === 'paid';
+  const isUnpaidOnline = isOnlineOrder && !isPaymentPaid && order.status !== 'Cancelled';
+  const canCancel = (order.status === 'Placed' || order.status === 'Confirmed') && !isUnpaidOnline;
+  const effectiveDiscount = Number(
+    (order.couponDiscount > 0 ? order.couponDiscount : order.discount || 0).toFixed(2)
+  );
 
   const handleCancelOrder = async () => {
     setCancelling(true);
@@ -188,11 +271,159 @@ export const OrderDetailsScreen: React.FC = () => {
       await cancelOrder(order.id);
       setCancelModalVisible(false);
       setToastMessage('Order has been cancelled successfully');
-    } catch (e) {
-      console.warn('Failed to cancel order:', e);
+    } catch (e: any) {
+      setCancelModalVisible(false);
+      sanitizeDevLog('OrderDetailsScreen.handleCancelOrder', e);
+      Alert.alert(
+        'Cancellation Failed',
+        getSafeUserErrorMessage(e, 'orderCancel')
+      );
     } finally {
       setCancelling(false);
     }
+  };
+
+  /**
+   * Handle Retry / Complete Online Payment
+   */
+  const handleRetryPayment = async () => {
+    if (!order || isRetryingPayment || isVerifyingPayment) return;
+    const numericOrderId = Number(order.id);
+    if (isNaN(numericOrderId) || numericOrderId <= 0) return;
+
+    setIsRetryingPayment(true);
+    try {
+      // 1. Fetch public config to validate key & mode
+      const config = await paymentService.getPaymentConfig(order.storeId);
+      if (!config.isEnabled) {
+        Alert.alert(
+          'Online Payment Unavailable',
+          'Online payments are currently disabled for this store. Please contact support.'
+        );
+        return;
+      }
+
+      const keyCheck = paymentService.validateKeyPrefix(config.publicKeyId, config.mode);
+      if (!keyCheck.isValid) {
+        Alert.alert('Configuration Error', keyCheck.error || 'Invalid payment gateway credentials.');
+        return;
+      }
+
+      // 2. Create / retrieve existing Razorpay order for this order ID
+      const paymentOrder = await paymentService.createPaymentOrder(numericOrderId, order.total, false);
+      const keyVal = paymentService.validateKeyPrefix(paymentOrder.publicKeyId, paymentOrder.mode);
+      if (!keyVal.isValid) {
+        throw new Error(keyVal.error || 'Invalid key received from payment order creation.');
+      }
+
+      const options: RazorpayCheckoutOptions = {
+        key: paymentOrder.publicKeyId,
+        amount: paymentOrder.amountInPaise,
+        currency: paymentOrder.currency || 'INR',
+        name: 'FreshMart',
+        description: `Order #${order.orderNumber || order.id}`,
+        order_id: paymentOrder.razorpayOrderId,
+        prefill: {
+          name: order.address?.name || '',
+          contact: order.address?.phone || '',
+        },
+        theme: {
+          color: '#059669',
+        },
+      };
+
+      // 3. Launch Dual-Engine Checkout
+      if (isNativeRazorpayAvailable()) {
+        try {
+          const nativeRes = await openNativeRazorpayCheckout(options);
+          await handlePaymentSuccess(nativeRes, paymentOrder.razorpayOrderId);
+        } catch (err: any) {
+          await handlePaymentFailure(err, paymentOrder.razorpayOrderId);
+        }
+      } else {
+        setActiveRazorpayOrderId(paymentOrder.razorpayOrderId);
+        setCheckoutOptions(options);
+        setCheckoutModalVisible(true);
+      }
+    } catch (e: any) {
+      sanitizeDevLog('OrderDetailsScreen.handleRetryPayment', e);
+      Alert.alert(
+        'Payment Initiation Failed',
+        getSafeUserErrorMessage(e, 'payment')
+      );
+    } finally {
+      setIsRetryingPayment(false);
+    }
+  };
+
+  const handlePaymentSuccess = async (data: RazorpaySuccessResponse, razorpayOrderId: string) => {
+    if (!order) return;
+    setIsVerifyingPayment(true);
+    setCheckoutModalVisible(false);
+
+    try {
+      const numericOrderId = Number(order.id);
+      const verifyRes = await paymentService.verifyPayment({
+        orderID: numericOrderId,
+        razorpayOrderId: data.razorpay_order_id || razorpayOrderId,
+        razorpayPaymentId: data.razorpay_payment_id,
+        razorpaySignature: data.razorpay_signature,
+        amount: order.total,
+      });
+
+      if (verifyRes.paymentStatus.toLowerCase() === 'paid') {
+        const updatedStatus = mapBackendStatusToOrderStatus(verifyRes.orderStatus || 'Confirmed');
+        const updatedOrder: Order = {
+          ...order,
+          paymentStatus: 'Paid',
+          status: updatedStatus,
+          trackingSteps: getUpdatedTrackingSteps(updatedStatus, order.trackingSteps),
+        };
+        setOrder(updatedOrder);
+        updateOrder(updatedOrder);
+        setToastMessage('Payment completed & verified successfully!');
+      } else {
+        Alert.alert(
+          'Payment Status',
+          `Payment submitted with status: ${verifyRes.paymentStatus}. Verifying with bank...`
+        );
+      }
+    } catch (vErr: any) {
+      sanitizeDevLog('OrderDetailsScreen.handlePaymentSuccess', vErr);
+      Alert.alert(
+        'Verification Failed',
+        getSafeUserErrorMessage(vErr, 'payment')
+      );
+    } finally {
+      setIsVerifyingPayment(false);
+    }
+  };
+
+  const handlePaymentFailure = async (error: RazorpayErrorResponse, razorpayOrderId: string) => {
+    if (!order) return;
+    setCheckoutModalVisible(false);
+
+    try {
+      const numericOrderId = Number(order.id);
+      await paymentService.recordPaymentFailure(
+        numericOrderId,
+        razorpayOrderId,
+        String(error.code),
+        error.description
+      );
+    } catch (fErr: any) {
+      sanitizeDevLog('OrderDetailsScreen.recordPaymentFailure', fErr);
+    }
+
+    const safeDescription =
+      error.description && !isTechnicalOrUnsafeMessage(error.description)
+        ? error.description
+        : 'Payment was cancelled or failed. You can retry whenever you are ready.';
+
+    Alert.alert(
+      'Payment Incomplete',
+      safeDescription
+    );
   };
 
   return (
@@ -200,6 +431,50 @@ export const OrderDetailsScreen: React.FC = () => {
       <AppHeader title={`Order #${order.orderNumber}`} subtitle={formatDate(order.date)} />
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* UNPAID ONLINE ORDER BANNER & RETRY ACTION */}
+        {isUnpaidOnline && (
+          <View
+            style={[
+              styles.pendingPaymentCard,
+              {
+                backgroundColor: '#FFFBEB',
+                borderColor: '#F59E0B',
+                ...theme.shadows.sm,
+              },
+            ]}
+          >
+            <View style={styles.pendingHeaderRow}>
+              <View style={styles.pendingIconBox}>
+                <Ionicons name="time" size={24} color="#D97706" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.pendingTitle}>Online Payment Pending</Text>
+                <Text style={styles.pendingSub}>
+                  Complete your Razorpay payment to confirm this order. Your cart items are reserved.
+                </Text>
+              </View>
+            </View>
+
+            <View style={{ marginTop: 14 }}>
+              <AppButton
+                title={
+                  isVerifyingPayment
+                    ? 'Verifying Payment...'
+                    : isRetryingPayment
+                    ? 'Connecting to Gateway...'
+                    : 'Complete Online Payment'
+                }
+                onPress={handleRetryPayment}
+                loading={isRetryingPayment || isVerifyingPayment}
+                disabled={isRetryingPayment || isVerifyingPayment}
+                variant="primary"
+                size="md"
+                leftIcon={<Ionicons name="card-outline" size={18} color="#FFF" />}
+              />
+            </View>
+          </View>
+        )}
+
         {/* Order Status & Tracking Stepper */}
         <View
           style={[
@@ -217,9 +492,6 @@ export const OrderDetailsScreen: React.FC = () => {
               <Text style={[styles.statusTitle, { color: theme.colors.textPrimary }]}>
                 Order Tracking
               </Text>
-              {/* <Text style={[styles.estimatedText, { color: theme.colors.primaryDark }]}>
-                {order.estimatedDelivery}
-              </Text> */}
             </View>
             <Badge
               label={order.status}
@@ -261,37 +533,82 @@ export const OrderDetailsScreen: React.FC = () => {
               },
             ]}
           >
-            Items in Order ({order.items.length})
+            Items in Order ({order.items?.length || 0})
           </Text>
 
-          {order.items.map((item) => (
-            <View key={item.id} style={styles.itemRow}>
-              <SafeImage
-                uri={item.image}
-                style={styles.itemImage}
-                resizeMode="cover"
-                fallbackIcon="basket-outline"
-                fallbackIconSize={20}
-              />
-              <View style={styles.itemInfo}>
-                <Text numberOfLines={1} style={[styles.itemName, { color: theme.colors.textPrimary }]}>
-                  {item.productName}
-                </Text>
-                <Text style={[styles.itemVariant, { color: theme.colors.textSecondary }]}>
-                  {item.variantName} • Qty: {item.quantity}
-                </Text>
-                <Text style={[styles.itemPrice, { color: theme.colors.textPrimary }]}>
-                  {formatCurrency(item.price)} each
-                </Text>
+          {order.items?.map((item, index) => (
+            <View key={item.id || `item-${index}`}>
+              <View style={styles.itemRow}>
+                <View
+                  style={[
+                    styles.itemImageContainer,
+                    {
+                      backgroundColor: theme.colors.surface,
+                      borderColor: theme.colors.borderLight,
+                    },
+                  ]}
+                >
+                  <SafeImage
+                    uri={item.image}
+                    fallbackIcon="cube-outline"
+                    width={56}
+                    height={56}
+                    style={styles.itemImage}
+                  />
+                </View>
+
+                <View style={styles.itemInfo}>
+                  <Text
+                    style={[styles.itemBrand, { color: theme.colors.textSecondary }]}
+                    numberOfLines={1}
+                  >
+                    {item.brand}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.itemName,
+                      {
+                        color: theme.colors.textPrimary,
+                        fontSize: theme.typography.size.sm,
+                        fontWeight: theme.typography.weight.semibold,
+                      },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {item.productName}
+                  </Text>
+                  <Text style={[styles.itemVariant, { color: theme.colors.textMuted }]}>
+                    {item.variantName} × {item.quantity}
+                  </Text>
+                </View>
+
+                <View style={styles.itemPriceCol}>
+                  <Text
+                    style={[
+                      styles.itemTotal,
+                      {
+                        color: theme.colors.primaryDarker,
+                        fontSize: theme.typography.size.sm,
+                        fontWeight: theme.typography.weight.bold,
+                      },
+                    ]}
+                  >
+                    {formatCurrency(item.totalPrice)}
+                  </Text>
+                  <Text style={[styles.itemUnitPrice, { color: theme.colors.textMuted }]}>
+                    {formatCurrency(item.price)} each
+                  </Text>
+                </View>
               </View>
-              <Text style={[styles.itemTotal, { color: theme.colors.primaryDarker }]}>
-                {formatCurrency(item.totalPrice)}
-              </Text>
+
+              {index < order.items.length - 1 && (
+                <View style={[styles.itemDivider, { backgroundColor: theme.colors.borderLight }]} />
+              )}
             </View>
           ))}
         </View>
 
-        {/* Shipping Address & Slot */}
+        {/* Shipping Address & Payment Mode */}
         <View
           style={[
             styles.card,
@@ -314,7 +631,7 @@ export const OrderDetailsScreen: React.FC = () => {
               },
             ]}
           >
-            Delivery Details
+            Delivery & Payment Details
           </Text>
 
           <View style={styles.detailRow}>
@@ -348,23 +665,17 @@ export const OrderDetailsScreen: React.FC = () => {
 
           <View style={[styles.divider, { backgroundColor: theme.colors.borderLight }]} />
 
-          {/* <View style={styles.detailRow}>
-            <Ionicons name="time-outline" size={18} color={theme.colors.secondary} />
-            <View style={{ marginLeft: 10, flex: 1 }}>
-              <Text style={[styles.detailTitle, { color: theme.colors.textPrimary }]}>
-                Slot: {order.deliverySlot.dateLabel} ({order.deliverySlot.timeWindow})
-              </Text>
-            </View>
-          </View>
-
-          <View style={[styles.divider, { backgroundColor: theme.colors.borderLight }]} /> */}
-
           <View style={styles.detailRow}>
             <Ionicons name="card-outline" size={18} color={theme.colors.primary} />
-            <View style={{ marginLeft: 10, flex: 1 }}>
+            <View style={{ marginLeft: 10, flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <Text style={[styles.detailTitle, { color: theme.colors.textPrimary }]}>
-                Payment Mode: {order.paymentMethod.toUpperCase()}
+                Payment Mode: {order.paymentMode || order.paymentMethod.toUpperCase()}
               </Text>
+              <Badge
+                label={order.paymentStatus || 'Pending'}
+                variant={isPaymentPaid ? 'success' : 'warning'}
+                size="sm"
+              />
             </View>
           </View>
         </View>
@@ -402,22 +713,13 @@ export const OrderDetailsScreen: React.FC = () => {
             </Text>
           </View>
 
-          {order.discount > 0 && (
-            <View style={styles.billRow}>
-              <Text style={[styles.billLabel, { color: theme.colors.primaryDark }]}>Product Discount</Text>
-              <Text style={[styles.billValue, { color: theme.colors.primaryDark }]}>
-                -{formatCurrency(order.discount)}
-              </Text>
-            </View>
-          )}
-
-          {order.couponDiscount > 0 && (
+          {effectiveDiscount > 0 && (
             <View style={styles.billRow}>
               <Text style={[styles.billLabel, { color: theme.colors.primaryDark }]}>
-                Coupon Discount {order.appliedCoupon?.code ? `(${order.appliedCoupon.code})` : ''}
+                {order.appliedCoupon?.code ? `Coupon Discount (${order.appliedCoupon.code})` : 'Discount'}
               </Text>
               <Text style={[styles.billValue, { color: theme.colors.primaryDark }]}>
-                -{formatCurrency(order.couponDiscount)}
+                -{formatCurrency(effectiveDiscount)}
               </Text>
             </View>
           )}
@@ -428,6 +730,15 @@ export const OrderDetailsScreen: React.FC = () => {
               {order.deliveryCharge === 0 ? 'FREE' : formatCurrency(order.deliveryCharge)}
             </Text>
           </View>
+
+          {order.platformFee != null && order.platformFee > 0 && (
+            <View style={styles.billRow}>
+              <Text style={[styles.billLabel, { color: theme.colors.textSecondary }]}>Platform Fee</Text>
+              <Text style={[styles.billValue, { color: theme.colors.textPrimary }]}>
+                {formatCurrency(order.platformFee)}
+              </Text>
+            </View>
+          )}
 
           <View style={styles.billRow}>
             <Text style={[styles.billLabel, { color: theme.colors.textSecondary }]}>Taxes & GST</Text>
@@ -449,7 +760,7 @@ export const OrderDetailsScreen: React.FC = () => {
                 },
               ]}
             >
-              Total Paid
+              Total {isPaymentPaid ? 'Paid' : 'Payable'}
             </Text>
             <Text
               style={[
@@ -493,11 +804,21 @@ export const OrderDetailsScreen: React.FC = () => {
         onCancel={() => setCancelModalVisible(false)}
       />
 
+      {/* Toast Feedback Message */}
       <ToastMessage
         visible={!!toastMessage}
         message={toastMessage || ''}
         type="info"
         onDismiss={() => setToastMessage(null)}
+      />
+
+      {/* Dual-Engine Razorpay In-App Checkout Modal */}
+      <RazorpayCheckoutModal
+        visible={checkoutModalVisible}
+        options={checkoutOptions}
+        onSuccess={(data) => handlePaymentSuccess(data, activeRazorpayOrderId)}
+        onError={(err) => handlePaymentFailure(err, activeRazorpayOrderId)}
+        onClose={() => setCheckoutModalVisible(false)}
       />
     </View>
   );
@@ -510,6 +831,35 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 16,
   },
+  pendingPaymentCard: {
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    marginBottom: 14,
+  },
+  pendingHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  pendingIconBox: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#FDE68A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pendingTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#92400E',
+    marginBottom: 2,
+  },
+  pendingSub: {
+    fontSize: 12,
+    color: '#B45309',
+    lineHeight: 16,
+  },
   card: {
     padding: 16,
     borderWidth: 1,
@@ -518,66 +868,74 @@ const styles = StyleSheet.create({
   statusHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
   },
   statusTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
-  },
-  estimatedText: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 2,
   },
   divider: {
     height: 1,
-    marginVertical: 12,
+    marginVertical: 14,
   },
   sectionTitle: {},
   itemRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    paddingVertical: 4,
+  },
+  itemImageContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: 8,
+    borderWidth: 1,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   itemImage: {
-    width: 50,
-    height: 50,
-    borderRadius: 6,
-    backgroundColor: '#F1F5F9',
+    width: 56,
+    height: 56,
   },
   itemInfo: {
     flex: 1,
     marginLeft: 12,
   },
-  itemName: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  itemVariant: {
+  itemBrand: {
     fontSize: 11,
-    marginTop: 1,
+    fontWeight: '600',
+    marginBottom: 2,
   },
-  itemPrice: {
+  itemName: {},
+  itemVariant: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  itemPriceCol: {
+    alignItems: 'flex-end',
+    marginLeft: 8,
+  },
+  itemTotal: {},
+  itemUnitPrice: {
     fontSize: 11,
     marginTop: 2,
   },
-  itemTotal: {
-    fontSize: 13,
-    fontWeight: '700',
-    marginLeft: 8,
+  itemDivider: {
+    height: 1,
+    marginVertical: 10,
   },
   detailRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
   },
   detailTitle: {
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '600',
   },
   detailSub: {
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 12,
     marginTop: 2,
+    lineHeight: 16,
   },
   billRow: {
     flexDirection: 'row',
@@ -595,5 +953,3 @@ const styles = StyleSheet.create({
   grandTotalLabel: {},
   grandTotalVal: {},
 });
-
-export const OrderTrackingScreen = OrderDetailsScreen;

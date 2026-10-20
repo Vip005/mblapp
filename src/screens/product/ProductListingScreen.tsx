@@ -19,8 +19,10 @@ import { ProductList } from '../../components/product/ProductList';
 import { FilterModal } from '../../components/modals/FilterModal';
 import { EmptyState } from '../../components/feedback/EmptyState';
 import { LoadingState } from '../../components/feedback/LoadingState';
+import { ErrorState } from '../../components/feedback/ErrorState';
 import { productService } from '../../services/api/productService';
 import { categoryService } from '../../services/api/categoryService';
+import { getSafeUserErrorMessage, sanitizeDevLog } from '../../utils/apiError';
 
 export const ProductListingScreen: React.FC = () => {
   const { theme } = useTheme();
@@ -47,8 +49,10 @@ export const ProductListingScreen: React.FC = () => {
   });
   const [sort, setSort] = useState<SortOption>('popularity');
   const [filterModalVisible, setFilterModalVisible] = useState(false);
+  const [loadError, setLoadError] = useState<unknown | null>(null);
 
   const loadData = useCallback(async () => {
+  setLoadError(null);
   if (!selectedStoreId) {
     setCategories([]);
     setProducts([]);
@@ -139,11 +143,8 @@ export const ProductListingScreen: React.FC = () => {
 
     setProducts(allProds);
   } catch (e: any) {
-    console.warn(
-      '[ProductListingScreen] Failed to load products:',
-      e?.message || e
-    );
-
+    sanitizeDevLog('ProductListingScreen.loadData', e);
+    setLoadError(e);
     setProducts([]);
   } finally {
     setLoading(false);
@@ -256,6 +257,12 @@ export const ProductListingScreen: React.FC = () => {
       {/* Main Listing */}
       {loading ? (
         <LoadingState message="Fetching grocery items..." />
+      ) : loadError ? (
+        <ErrorState
+          title="Unable to Load Products"
+          message={getSafeUserErrorMessage(loadError, 'product')}
+          onRetry={loadData}
+        />
       ) : filteredProducts.length === 0 ? (
         <EmptyState
           iconName="search-outline"

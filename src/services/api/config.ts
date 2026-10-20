@@ -31,9 +31,15 @@
 // };
 
 
-const API_BASE_URL = 
-// 'http://localhost:5000';
-  'https://greenmartapi-aqfedue2dte2dccy.malaysiawest-01.azurewebsites.net';
+const resolveApiBaseUrl = (): string => {
+  const envUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
+  if (envUrl) {
+    return envUrl.replace(/\/+$/, '');
+  }
+  return 'https://groceryapi-fvcjdtfpcrera8cd.westus3-01.azurewebsites.net';
+};
+
+export const API_BASE_URL = resolveApiBaseUrl();
 
 /**
  * Controlled testing flag for OTP autofill & DEV conveniences.
@@ -44,7 +50,7 @@ const API_BASE_URL =
  * - In final production: Set to false or toggle via EXPO_PUBLIC_TESTING_MODE.
  */
 export const IS_TESTING_ENVIRONMENT: boolean =
-  Boolean(__DEV__ || process.env.EXPO_PUBLIC_TESTING_MODE === 'true');
+  Boolean((typeof __DEV__ !== 'undefined' && __DEV__) || process.env.EXPO_PUBLIC_TESTING_MODE === 'true');
 
 export const API_CONFIG = {
   BASE_URL: API_BASE_URL,

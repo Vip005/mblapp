@@ -20,6 +20,7 @@ import { AppButton } from '../../components/common/AppButton';
 import { determineNextAppRoute } from '../../utils/onboardingProgression';
 import { storage } from '../../utils/storage';
 import { IS_TESTING_ENVIRONMENT } from '../../services/api/config';
+import { getSafeUserErrorMessage, sanitizeDevLog } from '../../utils/apiError';
 
 export const OtpScreen: React.FC = () => {
   const { theme } = useTheme();
@@ -109,7 +110,8 @@ export const OtpScreen: React.FC = () => {
         navigation.navigate('NameUpdate');
       }
     } catch (err: any) {
-      setError(err.message || 'Verification failed. Please check the code.');
+      sanitizeDevLog('OtpScreen.handleVerify', err);
+      setError(getSafeUserErrorMessage(err, 'otp'));
     } finally {
       setLoading(false);
     }
@@ -136,7 +138,8 @@ export const OtpScreen: React.FC = () => {
         setOtp(newCode);
       }
     } catch (err: any) {
-      setError(err.message || 'Failed to resend OTP. Please try again.');
+      sanitizeDevLog('OtpScreen.handleResend', err);
+      setError(getSafeUserErrorMessage(err, 'otp'));
     }
   };
 

@@ -66,7 +66,11 @@ export const CartScreen: React.FC = () => {
           title="Your Cart is Empty"
           description="Looks like you haven't added any groceries to your cart yet. Explore our fresh seasonal produce!"
           buttonLabel="Start Shopping"
-          onButtonPress={() => navigation.navigate('Main')}
+          onButtonPress={() =>
+  navigation.navigate('Main', {
+    screen: 'HomeTab',
+  })
+}
         />
       </View>
     );

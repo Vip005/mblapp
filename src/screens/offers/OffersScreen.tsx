@@ -18,9 +18,12 @@ import { AppHeader } from '../../components/common/AppHeader';
 import { ToastMessage } from '../../components/feedback/ToastMessage';
 import { LoadingState } from '../../components/feedback/LoadingState';
 import { EmptyState } from '../../components/feedback/EmptyState';
+import { ErrorState } from '../../components/feedback/ErrorState';
 import { couponService } from '../../services/api/couponService';
 import { offerService } from '../../services/api/offerService';
 import { isValidImageUri } from '../../components/common/SafeImage';
+import { getSafeUserErrorMessage, sanitizeDevLog } from '../../utils/apiError';
+import * as Clipboard from 'expo-clipboard';
 
 const formatOfferDate = (dateStr?: string): string => {
   if (!dateStr) return '';
@@ -47,6 +50,7 @@ export const OffersScreen: React.FC = () => {
   const [offers, setOffers] = useState<Offer[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [loadError, setLoadError] = useState<unknown | null>(null);
 
   const loadData = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
@@ -54,6 +58,7 @@ export const OffersScreen: React.FC = () => {
     } else {
       setLoading(true);
     }
+    setLoadError(null);
 
     try {
       const [fetchedCoupons, fetchedOffers] = await Promise.all([
@@ -63,7 +68,8 @@ export const OffersScreen: React.FC = () => {
       setCoupons(fetchedCoupons);
       setOffers(fetchedOffers);
     } catch (err) {
-      console.warn('[OffersScreen] Error loading store offers/coupons:', err);
+      sanitizeDevLog('OffersScreen.loadData', err);
+      setLoadError(err);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -74,7 +80,12 @@ export const OffersScreen: React.FC = () => {
     loadData();
   }, [loadData]);
 
-  const handleCopyCoupon = (code: string) => {
+  const handleCopyCoupon = async (code: string) => {
+    try {
+      await Clipboard.setStringAsync(code);
+    } catch (err) {
+      sanitizeDevLog('OffersScreen.handleCopyCoupon', err);
+    }
     setToastMessage(`Coupon code "${code}" copied to clipboard! Paste it at checkout.`);
   };
 
@@ -108,6 +119,23 @@ export const OffersScreen: React.FC = () => {
 
       {loading ? (
         <LoadingState message="Loading store offers & coupons..." />
+      ) : loadError ? (
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => loadData(true)}
+              tintColor={theme.colors.primary}
+            />
+          }
+        >
+          <ErrorState
+            title="Unable to Load Offers"
+            message={getSafeUserErrorMessage(loadError, 'coupon')}
+            onRetry={() => loadData(true)}
+          />
+        </ScrollView>
       ) : !hasContent ? (
         <ScrollView
           contentContainerStyle={{ flexGrow: 1 }}

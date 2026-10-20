@@ -20,6 +20,11 @@ import { AppButton } from '../../components/common/AppButton';
 import { AppInput } from '../../components/common/AppInput';
 import { isValidPhone, isValidPincode, isNotEmpty } from '../../utils/validators';
 import { normalizePincode } from '../../utils/storeMatcher';
+import { getSafeUserErrorMessage, sanitizeDevLog } from '../../utils/apiError';
+import { useStore } from '../../hooks/useStore';
+import { storeService } from '../../services/api/storeService';
+import { storage, STORAGE_KEYS } from '../../utils/storage';
+import { User } from '../../types';
 
 const ADDRESS_TYPES: AddressType[] = ['Home', 'Work', 'Other'];
 
@@ -29,6 +34,7 @@ export const PrimaryAddressScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { addAddress } = useAddress();
+  const { selectStore } = useStore();
 
   const [name, setName] = useState(user?.name || '');
   const [phone, setPhone] = useState(user?.phone || '');
@@ -75,12 +81,28 @@ export const PrimaryAddressScreen: React.FC = () => {
         isDefault: true,
       });
 
+      // If exactly 1 active store exists, auto-select and proceed directly to Main
+      const activeStores = await storeService.getActiveStores().catch(() => []);
+      if (activeStores.length === 1) {
+        await selectStore(activeStores[0]);
+        const customerId = user?.id || (await storage.get<User | null>(STORAGE_KEYS.USER, null))?.id;
+        if (customerId) {
+          await storage.set(STORAGE_KEYS.customerOnboarding(customerId), true);
+        }
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'Main' }],
+        });
+        return;
+      }
+
       navigation.reset({
         index: 0,
         routes: [{ name: 'StoreSelection', params: { customerPincode: cleanedPincode } }],
       });
     } catch (err: any) {
-      setErrors({ form: err.message || 'Failed to save address. Please try again.' });
+      sanitizeDevLog('PrimaryAddressScreen.handleContinue', err);
+      setErrors({ form: getSafeUserErrorMessage(err, 'address') });
     } finally {
       setLoading(false);
     }

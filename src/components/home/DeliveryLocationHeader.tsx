@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -18,8 +18,13 @@ export const DeliveryLocationHeader: React.FC = () => {
   const insets = useSafeAreaInsets();
   const { user, isLoggedIn } = useAuth();
   const { selectedAddress } = useAddress();
-  const { selectedStore } = useStore();
+  const { selectedStore, activeStores, stores } = useStore();
   const { unreadCount } = useNotifications();
+
+  const hasMultipleStores = useMemo(() => {
+    const list = activeStores && activeStores.length > 0 ? activeStores : (stores || []).filter((s) => s.isActive && s.id > 0);
+    return list.length > 1;
+  }, [activeStores, stores]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -77,8 +82,9 @@ export const DeliveryLocationHeader: React.FC = () => {
 
         {/* Selected Store Indicator & Switcher */}
         <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={() => navigation.navigate('StoreSelection')}
+          activeOpacity={hasMultipleStores ? 0.7 : 1}
+          disabled={!hasMultipleStores}
+          onPress={() => hasMultipleStores && navigation.navigate('StoreSelection')}
           style={[
             styles.storeBadge,
             {
@@ -101,7 +107,9 @@ export const DeliveryLocationHeader: React.FC = () => {
           >
             {selectedStore ? `${selectedStore.name} (${selectedStore.pincode})` : 'Select Store'}
           </Text>
-          <Ionicons name="swap-horizontal" size={12} color={theme.colors.primary} />
+          {hasMultipleStores && (
+            <Ionicons name="swap-horizontal" size={12} color={theme.colors.primary} />
+          )}
         </TouchableOpacity>
       </View>
 

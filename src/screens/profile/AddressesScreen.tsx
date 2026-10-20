@@ -5,6 +5,7 @@ import {
   StyleSheet,
   FlatList,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Address } from '../../types';
@@ -15,6 +16,7 @@ import { AddressFormModal } from '../../components/modals/AddressFormModal';
 import { ConfirmationModal } from '../../components/modals/ConfirmationModal';
 import { ToastMessage } from '../../components/feedback/ToastMessage';
 import { AppButton } from '../../components/common/AppButton';
+import { getSafeUserErrorMessage, sanitizeDevLog } from '../../utils/apiError';
 
 export const AddressesScreen: React.FC = () => {
   const { theme } = useTheme();
@@ -44,20 +46,31 @@ export const AddressesScreen: React.FC = () => {
   };
 
   const handleSave = async (data: Omit<Address, 'id'>) => {
-    if (editingAddress) {
-      await updateAddress(editingAddress.id, data);
-      setToastMessage('Address updated successfully');
-    } else {
-      await addAddress(data);
-      setToastMessage('New address saved successfully');
+    try {
+      if (editingAddress) {
+        await updateAddress(editingAddress.id, data);
+        setToastMessage('Address updated successfully');
+      } else {
+        await addAddress(data);
+        setToastMessage('New address saved successfully');
+      }
+    } catch (e: any) {
+      sanitizeDevLog('AddressesScreen.handleSave', e);
+      Alert.alert('Address Error', getSafeUserErrorMessage(e, 'address'));
+      throw e;
     }
   };
 
   const handleDeleteConfirm = async () => {
     if (deleteId) {
-      await deleteAddress(deleteId);
-      setDeleteId(null);
-      setToastMessage('Address deleted');
+      try {
+        await deleteAddress(deleteId);
+        setDeleteId(null);
+        setToastMessage('Address deleted');
+      } catch (e: any) {
+        sanitizeDevLog('AddressesScreen.handleDeleteConfirm', e);
+        Alert.alert('Delete Address Failed', getSafeUserErrorMessage(e, 'address'));
+      }
     }
   };
 

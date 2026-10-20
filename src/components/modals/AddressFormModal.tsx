@@ -15,6 +15,7 @@ import { useTheme } from '../../hooks/useTheme';
 import { AppInput } from '../common/AppInput';
 import { AppButton } from '../common/AppButton';
 import { isValidPhone, isValidPincode, isNotEmpty } from '../../utils/validators';
+import { getSafeUserErrorMessage, sanitizeDevLog } from '../../utils/apiError';
 
 interface AddressFormModalProps {
   visible: boolean;
@@ -104,7 +105,11 @@ export const AddressFormModal: React.FC<AddressFormModalProps> = ({
       });
       onClose();
     } catch (e) {
-      console.warn('Failed to save address:', e);
+      sanitizeDevLog('AddressFormModal.handleSave', e);
+      setErrors((prev) => ({
+        ...prev,
+        form: getSafeUserErrorMessage(e, 'address'),
+      }));
     } finally {
       setSubmitting(false);
     }
@@ -147,6 +152,15 @@ export const AddressFormModal: React.FC<AddressFormModalProps> = ({
           </View>
 
           <ScrollView style={styles.body} showsVerticalScrollIndicator={false}>
+            {errors.form ? (
+              <View style={[styles.errorBanner, { backgroundColor: theme.colors.errorLight }]}>
+                <Ionicons name="alert-circle" size={16} color={theme.colors.error} style={{ marginRight: 6 }} />
+                <Text style={[styles.errorBannerText, { color: theme.colors.error }]}>
+                  {errors.form}
+                </Text>
+              </View>
+            ) : null}
+
             {/* Address Type selector */}
             <Text
               style={[
@@ -358,5 +372,17 @@ const styles = StyleSheet.create({
   footer: {
     padding: 16,
     borderTopWidth: 1,
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  errorBannerText: {
+    fontSize: 13,
+    fontWeight: '500',
+    flex: 1,
   },
 });

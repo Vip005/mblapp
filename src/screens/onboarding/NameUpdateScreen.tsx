@@ -18,6 +18,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { AppButton } from '../../components/common/AppButton';
 import { AppInput } from '../../components/common/AppInput';
 import { isNotEmpty } from '../../utils/validators';
+import { getSafeUserErrorMessage, sanitizeDevLog } from '../../utils/apiError';
 
 export const NameUpdateScreen: React.FC = () => {
   const { theme } = useTheme();
@@ -50,7 +51,8 @@ export const NameUpdateScreen: React.FC = () => {
         routes: [{ name: 'PrimaryAddress' }],
       });
     } catch (err: any) {
-      setError(err.message || 'Failed to save name. Please try again.');
+      sanitizeDevLog('NameUpdateScreen.handleContinue', err);
+      setError(getSafeUserErrorMessage(err, 'nameUpdate'));
     } finally {
       setLoading(false);
     }

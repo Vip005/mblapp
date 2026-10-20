@@ -298,9 +298,13 @@ export const orderService = {
         throw new Error('Order placement failed at frontend validation: Invalid delivery address. Please select a valid address.');
       }
 
-      if (data.paymentMethod !== 'cod') {
-        throw new Error('Order placement failed at frontend validation: Online payment is currently unavailable. Please choose Cash on Delivery.');
+      const validPaymentMethods = ['cod', 'razorpay', 'online', 'upi', 'card', 'wallet'];
+      if (!validPaymentMethods.includes(data.paymentMethod)) {
+        throw new Error(`Order placement failed at frontend validation: Invalid payment method "${data.paymentMethod}".`);
       }
+
+      const isOnlinePayment = data.paymentMethod !== 'cod';
+      const backendPaymentMode = isOnlinePayment ? 'RAZORPAY' : 'COD';
 
       if (!data.items || data.items.length === 0) {
         throw new Error('Order placement failed at frontend validation: Your cart is empty. Please add items before checkout.');
@@ -334,26 +338,43 @@ export const orderService = {
         { status: 'Delivered', label: 'Delivered', completed: false, current: false },
       ];
 
+      // SellingPrice subtotal contract:
+      // ItemTotal = sum(SellingPrice * Quantity)
+      // DiscountTotal includes only valid coupon/order-level discounts
+      const computedItemTotal = Number(
+        data.items.reduce((sum, it) => sum + Number(it.price) * Number(it.quantity), 0).toFixed(2)
+      );
+      const itemTotal = computedItemTotal > 0 ? computedItemTotal : Number((data.subtotal || 0).toFixed(2));
+      const orderLevelDiscount = Number(
+        Math.min(itemTotal, Math.max(0, data.couponDiscount || 0)).toFixed(2)
+      );
+      const deliveryFee = Number((data.deliveryCharge || 0).toFixed(2));
+      const platformFee = Number((data.platformFee || 0).toFixed(2));
+      const taxes = Number((data.tax || 0).toFixed(2));
+      const expectedGrandTotal = Number(
+        Math.max(0, itemTotal - orderLevelDiscount + deliveryFee + platformFee + taxes).toFixed(2)
+      );
+
       const orderMasterDto = {
         orderID: 0,
         orderNumber,
         customerId: parsedCustomerId,
         addressId: parsedAddressId,
         AddressId: parsedAddressId,
-        paymentMode: 'COD',
+        paymentMode: backendPaymentMode,
         status: 'Pending',
-        itemTotal: data.subtotal,
-        deliveryFee: data.deliveryCharge,
-        platformFee: 0,
-        taxes: data.tax,
-        grandTotal: data.total,
+        itemTotal,
+        deliveryFee,
+        platformFee,
+        taxes,
+        grandTotal: expectedGrandTotal,
         cancellationReason: '',
         createdDate: now.toISOString(),
         modifiedDate: now.toISOString(),
         storeID: Number(selectedStoreId),
         paymentStatus: 'Pending',
         paymentTransactionID: '',
-        discountTotal: (data.discount || 0) + (data.couponDiscount || 0),
+        discountTotal: orderLevelDiscount,
       };
 
       const itemsDto = data.items.map((it) => ({
@@ -363,9 +384,9 @@ export const orderService = {
         productVariantID: parseInt(it.variantId!, 10),
         productName: it.productName,
         variantLabel: it.variantName || 'Standard',
-        price: it.price,
+        price: Number(it.price),
         quantity: it.quantity,
-        total: it.totalPrice,
+        total: Number((Number(it.price) * it.quantity).toFixed(2)),
         createdDate: now.toISOString(),
       }));
 
@@ -413,31 +434,37 @@ export const orderService = {
           ? Number(resOrder.grandTotal)
           : resOrder.GrandTotal != null
           ? Number(resOrder.GrandTotal)
-          : data.total;
+          : expectedGrandTotal;
       const serverItemTotal =
         resOrder.itemTotal != null
           ? Number(resOrder.itemTotal)
           : resOrder.ItemTotal != null
           ? Number(resOrder.ItemTotal)
-          : data.subtotal;
+          : itemTotal;
       const serverDiscountTotal =
         resOrder.discountTotal != null
           ? Number(resOrder.discountTotal)
           : resOrder.DiscountTotal != null
           ? Number(resOrder.DiscountTotal)
-          : (data.discount || 0) + (data.couponDiscount || 0);
+          : orderLevelDiscount;
       const serverDeliveryFee =
         resOrder.deliveryFee != null
           ? Number(resOrder.deliveryFee)
           : resOrder.DeliveryFee != null
           ? Number(resOrder.DeliveryFee)
-          : data.deliveryCharge;
+          : deliveryFee;
+      const serverPlatformFee =
+        resOrder.platformFee != null
+          ? Number(resOrder.platformFee)
+          : resOrder.PlatformFee != null
+          ? Number(resOrder.PlatformFee)
+          : platformFee;
       const serverTaxes =
         resOrder.taxes != null
           ? Number(resOrder.taxes)
           : resOrder.Taxes != null
           ? Number(resOrder.Taxes)
-          : data.tax;
+          : taxes;
 
       const newOrder: Order = {
         ...data,
@@ -445,9 +472,14 @@ export const orderService = {
         orderNumber: String(confirmedOrderNumber),
         date: resOrder.createdDate || resOrder.CreatedDate || now.toISOString(),
         status: 'Placed',
+        paymentMethod: data.paymentMethod,
+        paymentMode: backendPaymentMode,
+        paymentStatus: resOrder.paymentStatus || 'Pending',
         subtotal: serverItemTotal,
         discount: serverDiscountTotal,
+        couponDiscount: 0,
         deliveryCharge: serverDeliveryFee,
+        platformFee: serverPlatformFee,
         tax: serverTaxes,
         total: serverGrandTotal,
         trackingSteps,
@@ -471,33 +503,28 @@ export const orderService = {
     const customerId = user?.id;
     const cacheKey = getCustomerOrdersKey(customerId);
 
-    if (/^\d+$/.test(orderId)) {
-      try {
-        await apiClient.delete(`/api/OrderMaster/${orderId}`);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.warn(`[orderService.cancelOrder] Backend error for id ${orderId}:`, msg);
-      }
+    const parsedOrderId = parseInt(String(orderId), 10);
+    if (!/^\d+$/.test(String(orderId)) || isNaN(parsedOrderId) || parsedOrderId <= 0) {
+      throw new Error('Invalid order ID for cancellation.');
     }
+
+    // Use backend status-based PUT /api/OrderMaster cancellation workflow (OrderMasterEdit).
+    // Do NOT catch and swallow errors: if the API request fails, local state must not be marked Cancelled.
+    await apiClient.put('/api/OrderMaster', {
+      orderID: parsedOrderId,
+      status: 'Cancelled',
+      cancellationReason: 'Cancelled by customer',
+    });
 
     const orders = await this.getOrders(customerId);
     let updatedOrder: Order | null = null;
 
     const updatedList = orders.map((o) => {
-      if (o.id === orderId || o.orderNumber === orderId) {
+      if (o.id === String(orderId) || o.orderNumber === String(orderId)) {
         updatedOrder = {
           ...o,
           status: 'Cancelled' as OrderStatus,
-          trackingSteps: [
-            ...o.trackingSteps,
-            {
-              status: 'Cancelled' as OrderStatus,
-              label: 'Order Cancelled',
-              date: 'Cancelled by customer',
-              completed: true,
-              current: true,
-            },
-          ],
+          trackingSteps: getUpdatedTrackingSteps('Cancelled', o.trackingSteps),
         };
         return updatedOrder;
       }
@@ -517,5 +544,17 @@ export const orderService = {
       await storage.remove(getCustomerOrdersKey(customerId));
     }
     await storage.remove(STORAGE_KEYS.ORDERS);
+  },
+
+  async saveVerifiedOrder(order: Order, targetCustomerId?: string): Promise<void> {
+    let customerId = targetCustomerId;
+    if (!customerId) {
+      const user = await storage.get<User | null>(STORAGE_KEYS.USER, null);
+      customerId = user?.id;
+    }
+    const cacheKey = getCustomerOrdersKey(customerId);
+    const existing = (await storage.get<Order[] | null>(cacheKey, null)) || [];
+    const updated = [order, ...existing.filter((o) => o.id !== order.id && o.orderNumber !== order.orderNumber)];
+    await storage.set(cacheKey, updated);
   },
 };

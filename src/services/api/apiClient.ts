@@ -171,11 +171,25 @@ async function request<T = any>(
     const text = await response.text();
     let json: any = null;
 
+    const isHtml = typeof text === 'string' && /<!doctype\s+html|<html[\s>]|<body[\s>]|<head[\s>]/i.test(text);
+    const isAzureStopped =
+      typeof text === 'string' &&
+      (text.toLowerCase().includes('this web app is stopped') ||
+        text.toLowerCase().includes('web app you have attempted to reach is currently stopped'));
+
     if (text) {
-      try {
-        json = JSON.parse(text);
-      } catch {
-        json = text;
+      if (isHtml) {
+        json = {
+          isHtml: true,
+          isAzureStopped,
+          htmlSnippet: text.slice(0, 300),
+        };
+      } else {
+        try {
+          json = JSON.parse(text);
+        } catch {
+          json = text;
+        }
       }
     }
 
@@ -186,13 +200,32 @@ async function request<T = any>(
           .map(([key, val]) => `${key}: ${Array.isArray(val) ? val.join(', ') : String(val)}`);
       }
       const serverDetail = typeof json === 'object' ? (json?.Detail || json?.detail) : null;
-      const primaryMsg =
-        (typeof json === 'object' && (json?.message || json?.title || json?.error)) ||
-        (typeof json === 'string' && json) ||
-        `HTTP Error ${response.status}`;
-      const baseMsg = serverDetail && !primaryMsg.includes(serverDetail)
+      const serverRootCause = typeof json === 'object' ? (json?.RootCause || json?.rootCause || json?.Inner || json?.inner) : null;
+      const serverSqlCode = typeof json === 'object' ? (json?.SqlErrorCode || json?.sqlErrorCode) : null;
+
+      let primaryMsg: string;
+      if (isAzureStopped) {
+        primaryMsg = 'Our service is temporarily unavailable. Please try again in a few minutes.';
+      } else if (isHtml) {
+        primaryMsg = `Server returned an HTML error response (HTTP ${response.status}).`;
+      } else if (typeof json === 'object' && (json?.message || json?.title || json?.error)) {
+        primaryMsg = json?.message || json?.title || json?.error;
+      } else if (typeof json === 'string' && json.trim()) {
+        primaryMsg = json.trim();
+      } else {
+        primaryMsg = `HTTP Error ${response.status}`;
+      }
+
+      let baseMsg = serverDetail && !primaryMsg.includes(serverDetail)
         ? `${primaryMsg}: ${serverDetail}`
         : primaryMsg;
+
+      if (serverRootCause && !baseMsg.includes(serverRootCause)) {
+        baseMsg = serverSqlCode
+          ? `${baseMsg} [Root Cause: ${serverRootCause} (SQL ${serverSqlCode})]`
+          : `${baseMsg} [Root Cause: ${serverRootCause}]`;
+      }
+
       const errorMsg = detailErrors.length > 0 ? `${baseMsg} (${detailErrors.join('; ')})` : baseMsg;
       throw new ApiError(errorMsg, response.status, json);
     }
@@ -214,12 +247,12 @@ async function request<T = any>(
   } catch (error: any) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
-      throw new ApiError('Network request timed out. Please check backend connection.', 408);
+      throw new ApiError('The request took too long. Please try again.', 408);
     }
     if (error instanceof ApiError) {
       throw error;
     }
-    throw new ApiError(error.message || 'Network error. Please check your connection.', 0);
+    throw new ApiError(error.message || 'Unable to connect. Please check your internet connection and try again.', 0);
   }
 }
 
