@@ -1,4 +1,4 @@
-import { ApiError } from '../services/api/apiClient';
+import { apiClient, ApiError } from '../services/api/apiClient';
 
 function assert(condition: any, message: string) {
   if (!condition) {
@@ -10,100 +10,132 @@ async function runTests() {
   console.log('--- Starting Checkout Database Error Diagnostics Tests ---');
   let passedCount = 0;
 
-  // Test 1: ApiError extraction formats EF Core DbUpdateException with RootCause and SQL code
-  console.log('Test 1: ApiError extraction formats EF Core DbUpdateException with RootCause and SQL code');
-  {
-    const mockDbErrorPayload = {
-      isSuccess: false,
-      statusCode: 500,
-      message: 'A database error occurred while saving entity changes.',
-      detail: 'An error occurred while saving the entity changes. See the inner exception for details.',
-      inner: "Invalid object name 'PaymentCheckoutAttempts'.",
-      rootCause: "Invalid object name 'PaymentCheckoutAttempts'.",
-      sqlErrorCode: 208,
-    };
+  const originalFetch = global.fetch;
 
-    // Format mimicking apiClient.ts logic
-    const serverDetail = mockDbErrorPayload.detail;
-    const serverRootCause = mockDbErrorPayload.rootCause || mockDbErrorPayload.inner;
-    const serverSqlCode = mockDbErrorPayload.sqlErrorCode;
-    const primaryMsg = mockDbErrorPayload.message;
+  try {
+    // =========================================================================
+    // Test 1: Real apiClient.ts extraction of EF Core DbUpdateException
+    // =========================================================================
+    console.log('Test 1: Real apiClient.ts extraction of EF Core DbUpdateException with RootCause & SQL code');
+    {
+      const mockDbErrorPayload = {
+        isSuccess: false,
+        statusCode: 500,
+        message: 'A database error occurred while saving entity changes.',
+        detail: 'An error occurred while saving the entity changes. See the inner exception for details.',
+        inner: "Invalid object name 'PaymentCheckoutAttempts'.",
+        rootCause: "Invalid object name 'PaymentCheckoutAttempts'.",
+        sqlErrorCode: 208,
+      };
 
-    let baseMsg = serverDetail && !primaryMsg.includes(serverDetail)
-      ? `${primaryMsg}: ${serverDetail}`
-      : primaryMsg;
+      // Mock global fetch to return server 500 response with database error payload
+      global.fetch = (async () => ({
+        ok: false,
+        status: 500,
+        headers: new Headers({ 'Content-Type': 'application/json' }),
+        text: async () => JSON.stringify(mockDbErrorPayload),
+      })) as any;
 
-    if (serverRootCause && !baseMsg.includes(serverRootCause)) {
-      baseMsg = serverSqlCode
-        ? `${baseMsg} [Root Cause: ${serverRootCause} (SQL ${serverSqlCode})]`
-        : `${baseMsg} [Root Cause: ${serverRootCause}]`;
+      let caughtError: ApiError | null = null;
+      try {
+        await apiClient.post('/api/payments/checkout-session', { storeID: 1 });
+      } catch (err: any) {
+        caughtError = err;
+      }
+
+      assert(caughtError !== null, 'apiClient.post must throw ApiError on HTTP 500');
+      assert(caughtError instanceof ApiError, 'Thrown error must be an instance of ApiError');
+      assert(caughtError!.statusCode === 500, 'Status code must be 500');
+      assert(
+        caughtError!.message.includes("Invalid object name 'PaymentCheckoutAttempts'"),
+        `apiClient must authoritatively parse and include the Root Cause table name in message: ${caughtError!.message}`
+      );
+      assert(
+        caughtError!.message.includes('(SQL 208)'),
+        `apiClient must authoritatively parse and format the SQL Server error code 208 in message: ${caughtError!.message}`
+      );
+
+      passedCount++;
+      console.log('  -> PASSED');
     }
 
-    const apiError = new ApiError(baseMsg, 500, mockDbErrorPayload);
+    // =========================================================================
+    // Test 2: Real apiClient.ts validation errors parsing with field details
+    // =========================================================================
+    console.log('Test 2: Real apiClient.ts validation errors parsing with field details');
+    {
+      const mockValidationErrorPayload = {
+        isSuccess: false,
+        statusCode: 400,
+        message: 'Validation failed',
+        errors: {
+          StoreID: ['Valid StoreID is required.'],
+          AddressId: ['Valid delivery address is required.'],
+        },
+      };
 
-    assert(apiError.statusCode === 500, 'Status code must be 500');
-    assert(
-      apiError.message.includes("Invalid object name 'PaymentCheckoutAttempts'"),
-      'Error message must contain the exact missing table name'
-    );
-    assert(
-      apiError.message.includes('(SQL 208)'),
-      'Error message must contain the SQL Server error number 208'
-    );
+      global.fetch = (async () => ({
+        ok: false,
+        status: 400,
+        headers: new Headers({ 'Content-Type': 'application/json' }),
+        text: async () => JSON.stringify(mockValidationErrorPayload),
+      })) as any;
 
-    passedCount++;
-    console.log('  -> PASSED');
-  }
+      let caughtError: ApiError | null = null;
+      try {
+        await apiClient.post('/api/payments/checkout-session', {});
+      } catch (err: any) {
+        caughtError = err;
+      }
 
-  // Test 2: Standard validation errors preserve field error formatting
-  console.log('Test 2: Standard validation errors preserve field error formatting');
-  {
-    const mockValidationErrorPayload = {
-      isSuccess: false,
-      statusCode: 400,
-      message: 'Validation failed',
-      errors: {
-        StoreID: ['Valid StoreID is required.'],
-        AddressId: ['Valid delivery address is required.'],
-      },
-    };
+      assert(caughtError !== null, 'apiClient.post must throw ApiError on HTTP 400');
+      assert(caughtError!.statusCode === 400, 'Status code must be 400');
+      assert(
+        caughtError!.message.includes('StoreID: Valid StoreID is required.'),
+        `apiClient must format validation dictionary errors: ${caughtError!.message}`
+      );
+      assert(
+        caughtError!.message.includes('AddressId: Valid delivery address is required.'),
+        `apiClient must format validation dictionary errors: ${caughtError!.message}`
+      );
 
-    const detailErrors = Object.entries(mockValidationErrorPayload.errors)
-      .map(([key, val]) => `${key}: ${Array.isArray(val) ? val.join(', ') : String(val)}`);
-    const primaryMsg = mockValidationErrorPayload.message;
-    const errorMsg = detailErrors.length > 0 ? `${primaryMsg} (${detailErrors.join('; ')})` : primaryMsg;
-
-    const apiError = new ApiError(errorMsg, 400, mockValidationErrorPayload);
-
-    assert(apiError.statusCode === 400, 'Status code must be 400');
-    assert(apiError.message.includes('StoreID: Valid StoreID is required.'), 'Must include StoreID error');
-    assert(apiError.message.includes('AddressId: Valid delivery address is required.'), 'Must include AddressId error');
-
-    passedCount++;
-    console.log('  -> PASSED');
-  }
-
-  // Test 3: Idempotent SQL reconciliation script validation
-  console.log('Test 3: Idempotent SQL reconciliation script validation');
-  {
-    const sqlReconciliationChecks = [
-      "IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'PaymentCheckoutAttempts')",
-      "IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'PaymentRefundRecoveryOutbox')",
-      "IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_PaymentCheckoutAttempts_AttemptToken')",
-      "IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_PaymentCheckoutAttempts_RazorpayOrderId')",
-      "IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_PaymentRefundRecoveryOutbox_IdempotencyKey')",
-      "IF NOT EXISTS (SELECT * FROM [__EFMigrationsHistory] WHERE [MigrationId] = N'20261016114600_AddPaymentCheckoutAttemptAndRefundOutbox')",
-    ];
-
-    for (const check of sqlReconciliationChecks) {
-      assert(check.length > 0, 'Reconciliation check pattern must be valid');
+      passedCount++;
+      console.log('  -> PASSED');
     }
 
-    passedCount++;
-    console.log('  -> PASSED');
-  }
+    // =========================================================================
+    // Test 3: Real apiClient.ts network timeout / connection abort handling
+    // =========================================================================
+    console.log('Test 3: Real apiClient.ts network timeout and failure handling');
+    {
+      global.fetch = (async () => {
+        const error = new Error('Network request failed');
+        (error as any).name = 'AbortError';
+        throw error;
+      }) as any;
 
-  console.log(`\nAll ${passedCount} Checkout Database Error Diagnostics tests passed successfully!`);
+      let caughtError: ApiError | null = null;
+      try {
+        await apiClient.get('/api/Stores');
+      } catch (err: any) {
+        caughtError = err;
+      }
+
+      assert(caughtError !== null, 'apiClient.get must throw ApiError on network abort');
+      assert(caughtError instanceof ApiError, 'Must be ApiError instance');
+      assert(
+        caughtError!.message.includes('too long') || caughtError!.message.includes('Unable to connect') || caughtError!.statusCode === 408,
+        `Must provide safe user-facing message on abort: ${caughtError!.message}`
+      );
+
+      passedCount++;
+      console.log('  -> PASSED');
+    }
+
+    console.log(`\nAll ${passedCount} Checkout Database Error Diagnostics tests passed successfully!`);
+  } finally {
+    global.fetch = originalFetch;
+  }
 }
 
 runTests().catch((err) => {

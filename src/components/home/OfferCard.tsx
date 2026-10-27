@@ -12,6 +12,11 @@ import * as Clipboard from 'expo-clipboard';
 import { Offer } from '../../types';
 import { useTheme } from '../../hooks/useTheme';
 import { SafeImage } from '../common/SafeImage';
+import {
+  getDiscountHighlight,
+  resolveTargetLabel,
+  calculateOfferCardWidth,
+} from '../../utils/offerHelpers';
 
 export interface OfferCardProps {
   offer: Offer;
@@ -52,31 +57,14 @@ export const OfferCard: React.FC<OfferCardProps> = ({
   // Case 1 (Single offer): Fills 100% of the available content container width
   // Case 2 (Multiple offers): Responsive carousel card width showing preview of next card
   const screenWidth = Dimensions.get('window').width;
-  const carouselWidth = Math.min(330, Math.max(270, screenWidth - 54));
-  const cardWidth = isFullWidth ? '100%' : (customWidth ?? carouselWidth);
+  const cardWidth = calculateOfferCardWidth(isFullWidth, screenWidth, customWidth);
 
   // ============================================================
   // PROMINENT DISCOUNT BADGE / HIGHLIGHT
   // ============================================================
-  let discountHighlight = '';
-  let discountSubtitle = 'Limited Time Offer';
-
-  if (offer.discountPercent && offer.discountPercent > 0) {
-    discountHighlight = `${offer.discountPercent}% OFF`;
-    discountSubtitle = 'Instant Discount';
-  } else if (offer.discountValue && offer.discountValue > 0) {
-    discountHighlight = `₹${offer.discountValue} OFF`;
-    discountSubtitle = 'Flat Savings';
-  } else if (offer.type === 'combo') {
-    discountHighlight = 'COMBO DEAL';
-    discountSubtitle = 'Special Bundle';
-  } else if (offer.code) {
-    discountHighlight = 'EXCLUSIVE CODE';
-    discountSubtitle = 'Use Coupon';
-  } else {
-    discountHighlight = 'SPECIAL DEAL';
-    discountSubtitle = 'Save on Groceries';
-  }
+  const discountInfo = getDiscountHighlight(offer);
+  const discountHighlight = discountInfo.highlight;
+  const discountSubtitle = discountInfo.subtitle;
 
   // ============================================================
   // VALIDITY FORMATTING
@@ -87,26 +75,7 @@ export const OfferCard: React.FC<OfferCardProps> = ({
   // ============================================================
   // TARGET CATEGORIES / PRODUCTS / SCOPE
   // ============================================================
-  let targetLabel = '';
-  if (offer.categories && offer.categories.length > 0) {
-    targetLabel = offer.categories
-      .map((c) => c.name)
-      .slice(0, 2)
-      .join(', ');
-  } else if (offer.categoryName) {
-    targetLabel = offer.categoryName;
-  } else if (offer.products && offer.products.length > 0) {
-    targetLabel = offer.products
-      .map((p) => p.name)
-      .slice(0, 2)
-      .join(', ');
-  } else if (offer.productName) {
-    targetLabel = offer.productName;
-  } else if (offer.offerScope === 'ALL_STORES') {
-    targetLabel = 'All Products';
-  } else if (offer.applicableDaysReadable) {
-    targetLabel = offer.applicableDaysReadable;
-  }
+  const targetLabel = resolveTargetLabel(offer);
 
   // ============================================================
   // ACTIONS

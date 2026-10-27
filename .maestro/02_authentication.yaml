@@ -1,0 +1,22 @@
+appId: com.afss05steam.freshmart
+---
+- launchApp
+- assertVisible: "Enter your mobile number"
+# Step 1: Input invalid mobile number (boundary check)
+- tapOn: "Mobile Number"
+- inputText: "12345"
+- tapOn: "Continue"
+- assertVisible: "Please enter a valid 10-digit mobile number"
+# Step 2: Input valid test mobile number
+- eraseText: 5
+- inputText: "9876543210"
+- tapOn: "Continue"
+# Step 3: Verify navigation to OTP Verification screen
+- extendedWaitUntil:
+    visible: "Verify with OTP"
+    timeout: 10000
+- assertVisible: "Enter the 6-digit code sent to"
+- assertVisible: "+91 9876543210"
+# Step 4: Submit OTP (test fixture 123456)
+- inputText: "123456"
+- tapOn: "Verify & Proceed"

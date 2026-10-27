@@ -10,6 +10,8 @@ import {
   StatusBar,
 } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
+
+const WebViewComponent: any = WebView;
 import { Ionicons } from '@expo/vector-icons';
 import {
   RazorpayCheckoutOptions,
@@ -204,7 +206,7 @@ export const RazorpayCheckoutModal: React.FC<RazorpayCheckoutModalProps> = ({
 
         {/* WebView Container */}
         <View style={styles.webViewContainer}>
-          <WebView
+          <WebViewComponent
             ref={webViewRef}
             originWhitelist={['*']}
             source={{ html: checkoutHtml, baseUrl: 'https://checkout.razorpay.com' }}

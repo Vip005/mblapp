@@ -385,7 +385,7 @@ export const StoreSelectionScreen: React.FC = () => {
       {/* Stores List */}
       <FlatList
         data={[]}
-        renderItem={null}
+        renderItem={() => null}
         ListHeaderComponent={
           <View style={styles.listContent}>
             {/* No match notice */}

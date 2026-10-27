@@ -32,6 +32,14 @@ import { ErrorState } from '../../components/feedback/ErrorState';
 import { ToastMessage } from '../../components/feedback/ToastMessage';
 import { productService } from '../../services/api/productService';
 import { getSafeUserErrorMessage, sanitizeDevLog } from '../../utils/apiError';
+import {
+  resolveCartItem,
+  resolveCurrentCartQty,
+  resolveAvailableStock,
+  resolveIsOutOfStock,
+  resolveUnitPrice,
+  resolveBottomTotalPrice,
+} from '../../utils/productDetailsHelper';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -115,19 +123,10 @@ export const ProductDetailsScreen: React.FC = () => {
   }
 
   const isWished = isInWishlist(product.id);
-  const cartItem = items.find(
-    (i) =>
-      String(i.productId) === String(product.id) &&
-      String(i.variantId) === String(selectedVariant.id)
-  );
-  const currentCartQty = cartItem ? cartItem.quantity : getItemQuantity(product.id, selectedVariant.id);
-
-  const availableStock = selectedVariant?.stock != null ? selectedVariant.stock : product.stock;
-  const isOutOfStock =
-    !product.isAvailable ||
-    (selectedVariant
-      ? !selectedVariant.isAvailable || selectedVariant.stock <= 0
-      : product.stock <= 0);
+  const cartItem = resolveCartItem(items, product.id, selectedVariant.id);
+  const currentCartQty = resolveCurrentCartQty(cartItem, getItemQuantity, product.id, selectedVariant.id);
+  const availableStock = resolveAvailableStock(selectedVariant, product);
+  const isOutOfStock = resolveIsOutOfStock(product, selectedVariant);
 
   const itemId = selectedVariant ? `${product.id}_${selectedVariant.id}` : '';
   const isPending =
@@ -135,8 +134,8 @@ export const ProductDetailsScreen: React.FC = () => {
     (itemId ? isItemPending(itemId) : false) ||
     (cartItem?.id ? isItemPending(cartItem.id) : false);
 
-  const unitPrice = selectedVariant?.price ?? product?.sellingPrice ?? 0;
-  const bottomTotalPrice = currentCartQty > 0 ? unitPrice * currentCartQty : unitPrice;
+  const unitPrice = resolveUnitPrice(selectedVariant, product);
+  const bottomTotalPrice = resolveBottomTotalPrice(currentCartQty, unitPrice);
 
   const handleAddToCart = async () => {
     if (isOutOfStock || isPending || isAddingRef.current || !selectedVariant || !product) return;

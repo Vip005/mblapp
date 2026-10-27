@@ -1,5 +1,12 @@
 import * as Clipboard from 'expo-clipboard';
-import { Offer, Product, ProductVariant } from '../types';
+import { Offer } from '../types';
+import {
+  getDiscountHighlight,
+  resolveTargetLabel,
+  calculateCarouselCardWidth,
+  calculateOfferCardWidth,
+  hasValidOfferImage,
+} from '../utils/offerHelpers';
 
 function assert(condition: any, message: string) {
   if (!condition) {
@@ -11,116 +18,111 @@ async function runTests() {
   console.log('--- Starting Offers UI & Product Card Layout Tests ---');
   let passedCount = 0;
 
-  // Test 1: Product Card Horizontal Geometry & Non-clipping Layout
-  console.log('Test 1: Product Card Horizontal Geometry & Non-clipping Layout');
+  // Test 1: Real Responsive Offer Card Width Calculation across Screen Densities
+  console.log('Test 1: Real Responsive Offer Card Width Calculation across Screen Densities');
   {
-    const cardWidth = 168;
-    const cardPaddingHorizontal = 10 * 2; // 20px
-    const innerContentWidth = cardWidth - cardPaddingHorizontal; // 148px
+    // Narrow phone (360px): 360 - 54 = 306px (within 270-330 bounds)
+    const narrowWidth = calculateCarouselCardWidth(360);
+    assert(narrowWidth === 306, `Narrow screen (360px) should yield 306px, got ${narrowWidth}px`);
 
-    // Vertical price column takes ~55px
-    const priceColumnWidth = 55;
-    const columnGap = 6;
-    const availableActionWidth = innerContentWidth - priceColumnWidth - columnGap; // 87px
+    // Standard phone (392px): 392 - 54 = 338px -> capped at max 330px
+    const standardWidth = calculateCarouselCardWidth(392);
+    assert(standardWidth === 330, `Standard screen (392px) should cap at 330px, got ${standardWidth}px`);
 
-    // Add button dimensions
-    const addBtnWidth = 68; // within minWidth 64 and maxWidth 72
-    assert(
-      addBtnWidth <= availableActionWidth,
-      `Add button (${addBtnWidth}px) must fit cleanly within available action width (${availableActionWidth}px)`
-    );
+    // Very small screen (300px): 300 - 54 = 246px -> floored at min 270px
+    const smallWidth = calculateCarouselCardWidth(300);
+    assert(smallWidth === 270, `Small screen (300px) should floor at 270px, got ${smallWidth}px`);
 
-    // QuantitySelector size="sm" dimensions
-    const qtySelectorWidth = 23 + 23 + 8 + 14; // btn + btn + paddingH*2 + qtyText = 68px
-    assert(
-      qtySelectorWidth <= availableActionWidth,
-      `QuantitySelector (${qtySelectorWidth}px) must fit cleanly within available action width (${availableActionWidth}px)`
-    );
+    // Single Offer mode (isFullWidth = true) must fill 100% container
+    const fullWidth = calculateOfferCardWidth(true, 392);
+    assert(fullWidth === '100%', 'Single offer must return 100% width');
+
+    // Multiple Offers mode (isFullWidth = false) must use carousel width
+    const carouselModeWidth = calculateOfferCardWidth(false, 360);
+    assert(carouselModeWidth === 306, 'Multiple offers must use responsive carousel card width');
 
     passedCount++;
     console.log('  -> PASSED');
   }
 
-  // Test 2: Double-Tap Prevention Mutex for Add to Cart
-  console.log('Test 2: Double-Tap Prevention Mutex for Add to Cart');
+  // Test 2: Double-Tap Prevention Mutex Pattern used in CartContext and ProductCard
+  console.log('Test 2: Double-Tap Prevention Mutex Pattern used in CartContext and ProductCard');
   {
-    let addCount = 0;
-    let isAdding = false;
+    const inFlightItemOps = new Set<string>();
+    let executedOperations = 0;
 
-    async function handleAddToCartWithMutex() {
-      if (isAdding) return 'MUTEX_BLOCKED';
-      isAdding = true;
+    async function triggerItemOperation(itemId: string) {
+      if (inFlightItemOps.has(itemId)) {
+        return 'MUTEX_BLOCKED';
+      }
+      inFlightItemOps.add(itemId);
       try {
-        await new Promise((res) => setTimeout(res, 40));
-        addCount++;
+        await new Promise((res) => setTimeout(res, 30));
+        executedOperations++;
         return 'ADDED';
       } finally {
-        isAdding = false;
+        inFlightItemOps.delete(itemId);
       }
     }
 
-    // Trigger rapid concurrent double-tap
+    // Trigger rapid concurrent double-tap on the exact same item
     const [res1, res2] = await Promise.all([
-      handleAddToCartWithMutex(),
-      handleAddToCartWithMutex(),
+      triggerItemOperation('prod_10_var_1'),
+      triggerItemOperation('prod_10_var_1'),
     ]);
 
     assert(
       (res1 === 'ADDED' && res2 === 'MUTEX_BLOCKED') || (res2 === 'ADDED' && res1 === 'MUTEX_BLOCKED'),
-      'Rapid duplicate tap must be intercepted by mutex'
+      'Rapid duplicate tap for the same item must be blocked by the in-flight Set mutex'
     );
-    assert(addCount === 1, 'Exactly one cart addition must occur');
+    assert(executedOperations === 1, 'Exactly one cart operation must execute');
+
+    // Subsequent operation after release succeeds
+    const res3 = await triggerItemOperation('prod_10_var_1');
+    assert(res3 === 'ADDED', 'Operation after lock release must succeed');
+    assert(executedOperations === 2, 'Total executed operations should be 2');
 
     passedCount++;
     console.log('  -> PASSED');
   }
 
-  // Test 3: Offer Card Prominent Discount Calculation
-  console.log('Test 3: Offer Card Prominent Discount Calculation');
+  // Test 3: Real Offer Card Prominent Discount Calculation (from src/utils/offerHelpers.ts)
+  console.log('Test 3: Real Offer Card Prominent Discount Calculation');
   {
-    function getDiscountHighlight(offer: Partial<Offer>) {
-      if (offer.discountPercent && offer.discountPercent > 0) {
-        return `${offer.discountPercent}% OFF`;
-      } else if (offer.discountValue && offer.discountValue > 0) {
-        return `₹${offer.discountValue} OFF`;
-      } else if (offer.type === 'combo') {
-        return 'COMBO DEAL';
-      } else if (offer.code) {
-        return 'EXCLUSIVE CODE';
-      } else {
-        return 'SPECIAL DEAL';
-      }
-    }
+    const pct = getDiscountHighlight({ discountPercent: 15 });
+    assert(pct.highlight === '15% OFF', 'Should compute percentage discount highlight');
+    assert(pct.subtitle === 'Instant Discount', 'Should compute percentage subtitle');
 
-    assert(getDiscountHighlight({ discountPercent: 15 }) === '15% OFF', 'Should compute percentage discount');
-    assert(getDiscountHighlight({ discountValue: 50 }) === '₹50 OFF', 'Should compute flat discount');
-    assert(getDiscountHighlight({ type: 'combo' }) === 'COMBO DEAL', 'Should compute combo deal');
-    assert(getDiscountHighlight({ code: 'SAVE10' }) === 'EXCLUSIVE CODE', 'Should compute code badge');
-    assert(getDiscountHighlight({}) === 'SPECIAL DEAL', 'Should fallback to special deal');
+    const flat = getDiscountHighlight({ discountValue: 50 });
+    assert(flat.highlight === '₹50 OFF', 'Should compute flat discount highlight');
+    assert(flat.subtitle === 'Flat Savings', 'Should compute flat subtitle');
+
+    const combo = getDiscountHighlight({ type: 'combo' });
+    assert(combo.highlight === 'COMBO DEAL', 'Should compute combo deal highlight');
+
+    const code = getDiscountHighlight({ code: 'SAVE10' });
+    assert(code.highlight === 'EXCLUSIVE CODE', 'Should compute exclusive code highlight');
+
+    const fallback = getDiscountHighlight({});
+    assert(fallback.highlight === 'SPECIAL DEAL', 'Should fallback to special deal highlight');
 
     passedCount++;
     console.log('  -> PASSED');
   }
 
-  // Test 4: Offer Card Responsive Width and Target Height
-  console.log('Test 4: Offer Card Responsive Width and Target Height');
+  // Test 4: Offer Card Target Label Resolution (from src/utils/offerHelpers.ts)
+  console.log('Test 4: Offer Card Target Label Resolution');
   {
-    // On narrow Android screen (360px wide)
-    const narrowScreenWidth = 360;
-    const narrowCardWidth = Math.min(320, Math.max(280, narrowScreenWidth - 48));
-    assert(narrowCardWidth === 312, `Narrow screen width must be 312px (got ${narrowCardWidth}px)`);
+    const categoryTarget = resolveTargetLabel({
+      categories: [{ id: '1', name: 'Fruits' }, { id: '2', name: 'Vegetables' }],
+    });
+    assert(categoryTarget === 'Fruits, Vegetables', 'Should join first 2 category names');
 
-    // On standard Android screen (392px / 412px wide)
-    const standardScreenWidth = 412;
-    const standardCardWidth = Math.min(320, Math.max(280, standardScreenWidth - 48));
-    assert(standardCardWidth === 320, `Standard screen width must be 320px (got ${standardCardWidth}px)`);
+    const namedCategory = resolveTargetLabel({ categoryName: 'Dairy' });
+    assert(namedCategory === 'Dairy', 'Should use categoryName');
 
-    // Card height calculation: hero (118) + content (~160) = ~278px
-    const estimatedHeight = 118 + 160;
-    assert(
-      estimatedHeight >= 260 && estimatedHeight <= 320,
-      `Card height (${estimatedHeight}px) must be within target range 260-320px`
-    );
+    const allStores = resolveTargetLabel({ offerScope: 'ALL_STORES' });
+    assert(allStores === 'All Products', 'Should resolve ALL_STORES to All Products');
 
     passedCount++;
     console.log('  -> PASSED');
@@ -138,56 +140,14 @@ async function runTests() {
     console.log('  -> PASSED');
   }
 
-  // Test 6: Offer Card Target Label Resolution
-  console.log('Test 6: Offer Card Target Label Resolution');
+  // Test 6: Graceful Missing Image Handling (from src/utils/offerHelpers.ts)
+  console.log('Test 6: Graceful Missing Image Handling');
   {
-    function resolveTargetLabel(offer: Partial<Offer>): string {
-      if (offer.categories && offer.categories.length > 0) {
-        return offer.categories.map((c) => c.name).slice(0, 2).join(', ');
-      } else if (offer.categoryName) {
-        return offer.categoryName;
-      } else if (offer.products && offer.products.length > 0) {
-        return offer.products.map((p) => p.name).slice(0, 2).join(', ');
-      } else if (offer.productName) {
-        return offer.productName;
-      } else if (offer.offerScope === 'ALL_STORES') {
-        return 'All Products';
-      }
-      return '';
-    }
-
-    assert(
-      resolveTargetLabel({ categories: [{ id: '1', name: 'Fruits' }, { id: '2', name: 'Vegetables' }] }) ===
-        'Fruits, Vegetables',
-      'Should join categories'
-    );
-    assert(resolveTargetLabel({ categoryName: 'Dairy' }) === 'Dairy', 'Should use categoryName');
-    assert(resolveTargetLabel({ offerScope: 'ALL_STORES' }) === 'All Products', 'Should use All Products for ALL_STORES');
-
-    passedCount++;
-    console.log('  -> PASSED');
-  }
-
-  // Test 7: Graceful Missing Image Handling
-  console.log('Test 7: Graceful Missing Image Handling');
-  {
-    const offerWithImage: Partial<Offer> = {
-      image: 'https://example.com/banner.jpg',
-    };
-    const offerWithoutImage: Partial<Offer> = {
-      image: undefined,
-    };
-    const offerWithEmptyImage: Partial<Offer> = {
-      image: '   ',
-    };
-
-    function hasValidImage(img?: string): boolean {
-      return Boolean(img && typeof img === 'string' && img.trim().length > 0 && img.startsWith('http'));
-    }
-
-    assert(hasValidImage(offerWithImage.image) === true, 'Valid image URL must be recognized');
-    assert(hasValidImage(offerWithoutImage.image) === false, 'Missing image must trigger artwork banner');
-    assert(hasValidImage(offerWithEmptyImage.image) === false, 'Empty image must trigger artwork banner');
+    assert(hasValidOfferImage('https://example.com/banner.jpg') === true, 'Valid HTTPS URL must be accepted');
+    assert(hasValidOfferImage('http://example.com/banner.jpg') === true, 'Valid HTTP URL must be accepted');
+    assert(hasValidOfferImage(undefined) === false, 'Undefined image must return false');
+    assert(hasValidOfferImage('   ') === false, 'Whitespace image must return false');
+    assert(hasValidOfferImage('ftp://example.com') === false, 'Non-HTTP URL must return false');
 
     passedCount++;
     console.log('  -> PASSED');

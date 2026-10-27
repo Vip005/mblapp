@@ -1,0 +1,17 @@
+appId: com.afss05steam.freshmart
+---
+- launchApp
+# Verify Store Selection screen or Header Store Switcher
+- extendedWaitUntil:
+    visible: "Select Store"
+    timeout: 8000
+- assertVisible: "Available Stores"
+# Tap on primary store
+- tapOn:
+    text: "FreshMart"
+    index: 0
+# Verify landing on Home screen with Store Header
+- extendedWaitUntil:
+    visible: "Categories"
+    timeout: 10000
+- assertVisible: "Special Offers"

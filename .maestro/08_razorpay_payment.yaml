@@ -1,0 +1,28 @@
+appId: com.afss05steam.freshmart
+---
+- launchApp
+- tapOn: "Cart"
+- extendedWaitUntil:
+    visible: "Proceed to Checkout"
+    timeout: 5000
+- tapOn: "Proceed to Checkout"
+# Step 1: Address Selection
+- extendedWaitUntil:
+    visible: "Select Delivery Address"
+    timeout: 5000
+- tapOn: "Continue"
+# Step 2: Online Payment Selection
+- extendedWaitUntil:
+    visible: "Select Payment Method"
+    timeout: 5000
+- tapOn: "Pay Online (Razorpay)"
+- tapOn: "Continue"
+# Step 3: Order Review & Online Payment Initiation
+- extendedWaitUntil:
+    visible: "Review Your Order"
+    timeout: 5000
+- tapOn: "Proceed to Pay"
+# Step 4: Dual-Engine Razorpay In-App Checkout Modal
+- extendedWaitUntil:
+    visible: "Razorpay"
+    timeout: 10000

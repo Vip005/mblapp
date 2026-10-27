@@ -1,0 +1,42 @@
+appId: com.afss05steam.freshmart
+---
+- launchApp
+# Verify initial app load and home screen state
+- extendedWaitUntil:
+    visible: "FreshMart"
+    timeout: 8000
+
+# Network Fault Testing: Toggle Airplane Mode
+- setAirplaneMode: true
+# Attempt tab navigation while offline to verify app handles fault gracefully
+- tapOn: "Categories"
+- extendedWaitUntil:
+    visible: "Categories"
+    timeout: 5000
+
+# Restore Network Connectivity
+- setAirplaneMode: false
+- tapOn: "Home"
+- extendedWaitUntil:
+    visible: "FreshMart"
+    timeout: 8000
+
+# Session Expiry & Logout Flow
+- tapOn: "Profile"
+- extendedWaitUntil:
+    visible: "Profile"
+    timeout: 5000
+- scrollUntilVisible:
+    element: "Log Out"
+    direction: DOWN
+- tapOn: "Log Out"
+# Confirm in modal
+- extendedWaitUntil:
+    visible: "Confirm Log Out?"
+    timeout: 5000
+- tapOn: "Log Out"
+# Verify user redirected to Login screen
+- extendedWaitUntil:
+    visible: "Log in or Sign up"
+    timeout: 8000
+- assertVisible: "Enter your mobile number to get started"

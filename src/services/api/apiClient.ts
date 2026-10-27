@@ -203,13 +203,27 @@ async function request<T = any>(
       const serverRootCause = typeof json === 'object' ? (json?.RootCause || json?.rootCause || json?.Inner || json?.inner) : null;
       const serverSqlCode = typeof json === 'object' ? (json?.SqlErrorCode || json?.sqlErrorCode) : null;
 
+      const candidateMsg =
+        typeof json === 'object' && json
+          ? json.message ||
+            json.Message ||
+            json.title ||
+            json.Title ||
+            json.error ||
+            json.Error ||
+            (Array.isArray(json.errorMessage) && json.errorMessage[0]) ||
+            (Array.isArray(json.ErrorMessage) && json.ErrorMessage[0]) ||
+            (typeof json.errorMessage === 'string' ? json.errorMessage : null) ||
+            (typeof json.ErrorMessage === 'string' ? json.ErrorMessage : null)
+          : null;
+
       let primaryMsg: string;
       if (isAzureStopped) {
         primaryMsg = 'Our service is temporarily unavailable. Please try again in a few minutes.';
       } else if (isHtml) {
         primaryMsg = `Server returned an HTML error response (HTTP ${response.status}).`;
-      } else if (typeof json === 'object' && (json?.message || json?.title || json?.error)) {
-        primaryMsg = json?.message || json?.title || json?.error;
+      } else if (candidateMsg) {
+        primaryMsg = candidateMsg;
       } else if (typeof json === 'string' && json.trim()) {
         primaryMsg = json.trim();
       } else {
@@ -232,11 +246,17 @@ async function request<T = any>(
 
     // Unpack standard backend response envelope if present
     if (json && typeof json === 'object') {
-      if ('isSuccess' in json) {
-        if (!json.isSuccess && json.statusCode >= 400) {
-          throw new ApiError(json.message || 'API operation failed', json.statusCode, json);
+      const hasSuccessField = 'isSuccess' in json || 'IsSuccess' in json;
+      const isSuccessVal = (json as any).isSuccess ?? (json as any).IsSuccess;
+      const statusCodeVal = (json as any).statusCode ?? (json as any).StatusCode;
+      const messageVal = (json as any).message ?? (json as any).Message;
+      const resultVal = (json as any).result !== undefined ? (json as any).result : (json as any).Result;
+
+      if (hasSuccessField) {
+        if (!isSuccessVal && statusCodeVal >= 400) {
+          throw new ApiError(messageVal || 'API operation failed', statusCodeVal, json);
         }
-        return (json.result !== undefined ? json.result : json) as T;
+        return (resultVal !== undefined ? resultVal : json) as T;
       }
       if ('success' in json && 'data' in json) {
         return json.data as T;

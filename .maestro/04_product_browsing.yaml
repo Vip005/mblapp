@@ -1,0 +1,28 @@
+appId: com.afss05steam.freshmart
+---
+- launchApp
+# Verify Home screen category header is rendered
+- extendedWaitUntil:
+    visible: "Explore Categories"
+    timeout: 10000
+# Tap on the search bar trigger
+- tapOn: "Search groceries, fruits, vegetables..."
+# Verify Search screen loaded with search input
+- extendedWaitUntil:
+    visible: "Search groceries..."
+    timeout: 8000
+# Type search query
+- inputText: "Milk"
+# Wait for search results
+- extendedWaitUntil:
+    visible: "Results"
+    timeout: 6000
+# Tap matching product to open Product Details
+- tapOn:
+    text: "Milk"
+    index: 0
+# Verify Product Details screen loaded
+- extendedWaitUntil:
+    visible: "Product Details"
+    timeout: 8000
+- assertVisible: "Add to Cart"

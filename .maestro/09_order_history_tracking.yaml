@@ -1,0 +1,18 @@
+appId: com.afss05steam.freshmart
+---
+- launchApp
+# Navigate to Orders tab
+- tapOn: "Orders"
+- extendedWaitUntil:
+    visible: "My Orders"
+    timeout: 8000
+# Tap the first order
+- tapOn:
+    point: "50%, 30%"
+# Verify Order Details & Tracking timeline
+- extendedWaitUntil:
+    visible: "Order Details"
+    timeout: 8000
+- assertVisible: "Order Status"
+- assertVisible: "Delivery Address"
+- assertVisible: "Order Summary"

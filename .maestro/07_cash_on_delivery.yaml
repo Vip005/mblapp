@@ -1,0 +1,29 @@
+appId: com.afss05steam.freshmart
+---
+- launchApp
+- tapOn: "Cart"
+- extendedWaitUntil:
+    visible: "Proceed to Checkout"
+    timeout: 5000
+- tapOn: "Proceed to Checkout"
+# Step 1: Delivery Address Selection
+- extendedWaitUntil:
+    visible: "Select Delivery Address"
+    timeout: 5000
+- tapOn: "Continue"
+# Step 2: Payment Method Selection
+- extendedWaitUntil:
+    visible: "Select Payment Method"
+    timeout: 5000
+- tapOn: "Cash on Delivery (COD)"
+- tapOn: "Continue"
+# Step 3: Order Review & Placement
+- extendedWaitUntil:
+    visible: "Review Your Order"
+    timeout: 5000
+- tapOn: "Place Order (COD)"
+# Step 4: Verify Order Confirmation
+- extendedWaitUntil:
+    visible: "Order Placed Successfully"
+    timeout: 15000
+- assertVisible: "Order #"

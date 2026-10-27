@@ -5,8 +5,8 @@ import { ProductCard } from './ProductCard';
 
 interface ProductListProps {
   products: Product[];
-  ListHeaderComponent?: React.ReactElement | null;
-  ListEmptyComponent?: React.ReactElement | null;
+  ListHeaderComponent?: React.ReactElement;
+  ListEmptyComponent?: React.ReactElement;
   onRefresh?: () => void;
   refreshing?: boolean;
 }
@@ -28,8 +28,8 @@ export const ProductList: React.FC<ProductListProps> = ({
       keyExtractor={(item) => item.id}
       renderItem={renderItem}
       contentContainerStyle={styles.container}
-      ListHeaderComponent={ListHeaderComponent}
-      ListEmptyComponent={ListEmptyComponent}
+      ListHeaderComponent={ListHeaderComponent || undefined}
+      ListEmptyComponent={ListEmptyComponent || undefined}
       onRefresh={onRefresh}
       refreshing={refreshing}
       showsVerticalScrollIndicator={false}

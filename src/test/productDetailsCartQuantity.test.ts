@@ -1,4 +1,15 @@
 import { Product, ProductVariant, CartItem } from '../types';
+import {
+  resolveCartItem as resolveCartItemHelper,
+  resolveCurrentCartQty as resolveCurrentCartQtyHelper,
+  resolveAvailableStock as resolveAvailableStockHelper,
+  resolveIsOutOfStock as resolveIsOutOfStockHelper,
+  resolveUnitPrice as resolveUnitPriceHelper,
+  resolveBottomTotalPrice as resolveBottomTotalPriceHelper,
+  resolveBottomPriceLabel as resolveBottomPriceLabelHelper,
+  resolveBottomActionMode as resolveBottomActionModeHelper,
+  BottomActionMode,
+} from '../utils/productDetailsHelper';
 
 function assert(condition: any, message: string) {
   if (!condition) {
@@ -7,7 +18,7 @@ function assert(condition: any, message: string) {
 }
 
 /**
- * Pure state transition & logic models matching ProductDetailsScreen.tsx exactly
+ * State container for testing ProductDetailsScreen logic via real exported helpers
  */
 interface ProductDetailsState {
   product: Product;
@@ -17,79 +28,30 @@ interface ProductDetailsState {
   isAddingRef: { current: boolean };
 }
 
-function resolveCartItem(state: ProductDetailsState): CartItem | undefined {
-  return state.cartItems.find(
-    (i) =>
-      String(i.productId) === String(state.product.id) &&
-      String(i.variantId) === String(state.selectedVariant.id)
-  );
-}
+// Delegate directly to the real production helper functions from src/utils/productDetailsHelper.ts
+const resolveCartItem = (state: ProductDetailsState) =>
+  resolveCartItemHelper(state.cartItems, state.product.id, state.selectedVariant.id);
 
-function resolveCurrentCartQty(state: ProductDetailsState): number {
-  const item = resolveCartItem(state);
-  return item ? item.quantity : 0;
-}
+const resolveCurrentCartQty = (state: ProductDetailsState) =>
+  resolveCurrentCartQtyHelper(resolveCartItem(state), () => 0, state.product.id, state.selectedVariant.id);
 
-function resolveIsOutOfStock(state: ProductDetailsState): boolean {
-  if (!state.product.isAvailable) return true;
-  if (state.selectedVariant) {
-    return !state.selectedVariant.isAvailable || state.selectedVariant.stock <= 0;
-  }
-  return state.product.stock <= 0;
-}
+const resolveIsOutOfStock = (state: ProductDetailsState) =>
+  resolveIsOutOfStockHelper(state.product, state.selectedVariant);
 
-function resolveAvailableStock(state: ProductDetailsState): number {
-  return state.selectedVariant?.stock != null ? state.selectedVariant.stock : state.product.stock;
-}
+const resolveAvailableStock = (state: ProductDetailsState) =>
+  resolveAvailableStockHelper(state.selectedVariant, state.product);
 
-function resolveUnitPrice(state: ProductDetailsState): number {
-  return state.selectedVariant?.price ?? state.product?.sellingPrice ?? 0;
-}
+const resolveUnitPrice = (state: ProductDetailsState) =>
+  resolveUnitPriceHelper(state.selectedVariant, state.product);
 
-function resolveBottomTotalPrice(state: ProductDetailsState): number {
-  const currentCartQty = resolveCurrentCartQty(state);
-  const unitPrice = resolveUnitPrice(state);
-  return currentCartQty > 0 ? unitPrice * currentCartQty : unitPrice;
-}
+const resolveBottomTotalPrice = (state: ProductDetailsState) =>
+  resolveBottomTotalPriceHelper(resolveCurrentCartQty(state), resolveUnitPrice(state));
 
-function resolveBottomPriceLabel(state: ProductDetailsState): string {
-  const currentCartQty = resolveCurrentCartQty(state);
-  return currentCartQty > 0 ? 'Total Price' : 'Price';
-}
+const resolveBottomPriceLabel = (state: ProductDetailsState) =>
+  resolveBottomPriceLabelHelper(resolveCurrentCartQty(state));
 
-type BottomActionMode = 'OUT_OF_STOCK' | 'QUANTITY_SELECTOR' | 'ADD_TO_CART';
-
-function resolveBottomActionMode(state: ProductDetailsState): {
-  mode: BottomActionMode;
-  buttonTitle?: string;
-  quantity?: number;
-  disabled?: boolean;
-} {
-  const isOutOfStock = resolveIsOutOfStock(state);
-  const currentCartQty = resolveCurrentCartQty(state);
-
-  if (isOutOfStock) {
-    return {
-      mode: 'OUT_OF_STOCK',
-      buttonTitle: 'Out of Stock',
-      disabled: true,
-    };
-  }
-
-  if (currentCartQty > 0) {
-    return {
-      mode: 'QUANTITY_SELECTOR',
-      quantity: currentCartQty,
-      disabled: false,
-    };
-  }
-
-  return {
-    mode: 'ADD_TO_CART',
-    buttonTitle: 'Add to Cart',
-    disabled: false,
-  };
-}
+const resolveBottomActionMode = (state: ProductDetailsState) =>
+  resolveBottomActionModeHelper(resolveIsOutOfStock(state), resolveCurrentCartQty(state));
 
 // Handlers mimicking ProductDetailsScreen
 async function handleAddToCart(state: ProductDetailsState): Promise<string> {

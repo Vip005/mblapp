@@ -1,5 +1,8 @@
 (globalThis as any).__DEV__ = true;
 
+const inMemoryAsyncStorage = new Map<string, string>();
+const inMemorySecureStore = new Map<string, string>();
+
 const Module = require('module');
 const originalRequire = Module.prototype.require;
 
@@ -16,17 +19,27 @@ Module.prototype.require = function (id: string, ...args: any[]) {
   }
   if (id === '@react-native-async-storage/async-storage') {
     return {
-      getItem: async () => null,
-      setItem: async () => {},
-      removeItem: async () => {},
-      clear: async () => {},
+      getItem: async (key: string) => inMemoryAsyncStorage.get(key) ?? null,
+      setItem: async (key: string, value: string) => {
+        inMemoryAsyncStorage.set(key, String(value));
+      },
+      removeItem: async (key: string) => {
+        inMemoryAsyncStorage.delete(key);
+      },
+      clear: async () => {
+        inMemoryAsyncStorage.clear();
+      },
     };
   }
   if (id === 'expo-secure-store') {
     return {
-      getItemAsync: async () => null,
-      setItemAsync: async () => {},
-      deleteItemAsync: async () => {},
+      getItemAsync: async (key: string) => inMemorySecureStore.get(key) ?? null,
+      setItemAsync: async (key: string, value: string) => {
+        inMemorySecureStore.set(key, String(value));
+      },
+      deleteItemAsync: async (key: string) => {
+        inMemorySecureStore.delete(key);
+      },
     };
   }
   if (id === 'expo-clipboard') {

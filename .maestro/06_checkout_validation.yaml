@@ -1,0 +1,13 @@
+appId: com.afss05steam.freshmart
+---
+- launchApp
+- tapOn: "Cart"
+- extendedWaitUntil:
+    visible: "Proceed to Checkout"
+    timeout: 8000
+- tapOn: "Proceed to Checkout"
+# Verify Checkout Steps (1: Address, 2: Payment, 3: Review)
+- extendedWaitUntil:
+    visible: "Delivery Address"
+    timeout: 8000
+- assertVisible: "Select Delivery Address"

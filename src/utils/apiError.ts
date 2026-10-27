@@ -209,9 +209,10 @@ export function extractSafeFieldValidation(error: unknown): string | null {
 
   if (data && typeof data === 'object') {
     // 1. Check for standard validation errors map: { errors: { Field: ['Error message'] } }
-    if (data.errors && typeof data.errors === 'object') {
+    const errorsMap = data.errors || data.Errors;
+    if (errorsMap && typeof errorsMap === 'object') {
       const messages: string[] = [];
-      for (const [key, val] of Object.entries(data.errors)) {
+      for (const [key, val] of Object.entries(errorsMap)) {
         if (Array.isArray(val)) {
           for (const item of val) {
             if (typeof item === 'string' && !isTechnicalOrUnsafeMessage(item)) {
@@ -227,18 +228,34 @@ export function extractSafeFieldValidation(error: unknown): string | null {
       }
     }
 
-    // 2. Check for single clean backend message in { message: '...' }
-    if (typeof data.message === 'string') {
-      const clean = data.message.trim();
+    // 2. Check for single clean backend message in message, Message, title, Title, error, Error, errorMessage, ErrorMessage
+    const candidateMsg =
+      (typeof data.message === 'string' && data.message) ||
+      (typeof data.Message === 'string' && data.Message) ||
+      (typeof data.title === 'string' && data.title) ||
+      (typeof data.Title === 'string' && data.Title) ||
+      (typeof data.error === 'string' && data.error) ||
+      (typeof data.Error === 'string' && data.Error) ||
+      (typeof data.errorMessage === 'string' && data.errorMessage) ||
+      (typeof data.ErrorMessage === 'string' && data.ErrorMessage) ||
+      (Array.isArray(data.errorMessage) && data.errorMessage.filter((m: any) => typeof m === 'string' && !isTechnicalOrUnsafeMessage(m)).join('; ')) ||
+      (Array.isArray(data.ErrorMessage) && data.ErrorMessage.filter((m: any) => typeof m === 'string' && !isTechnicalOrUnsafeMessage(m)).join('; '));
+
+    if (candidateMsg) {
+      const clean = candidateMsg.trim();
       if (!isTechnicalOrUnsafeMessage(clean)) {
         return clean;
       }
     }
   }
 
-  // 3. Check for clean error.message if not technical
-  if (typeof errObj.message === 'string') {
-    const clean = errObj.message.trim();
+  // 3. Check for clean error.message / error.Message if not technical
+  const candidateErr =
+    (typeof errObj.message === 'string' && errObj.message) ||
+    (typeof errObj.Message === 'string' && errObj.Message);
+
+  if (candidateErr) {
+    const clean = candidateErr.trim();
     if (!isTechnicalOrUnsafeMessage(clean)) {
       return clean;
     }

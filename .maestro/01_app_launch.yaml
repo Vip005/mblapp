@@ -1,0 +1,11 @@
+appId: com.afss05steam.freshmart
+---
+- launchApp:
+    clearState: true
+- assertVisible: "FreshMart"
+# Verify initial splash loads and navigates based on authentication state
+- extendedWaitUntil:
+    visible: "Login"
+    timeout: 10000
+- assertVisible: "Enter your mobile number"
+- assertVisible: "Continue"

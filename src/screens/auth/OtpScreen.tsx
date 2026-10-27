@@ -32,7 +32,7 @@ export const OtpScreen: React.FC = () => {
   const devOtp = route.params?.devOtp;
 
   const { verifyOtp, login } = useAuth();
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<any>(null);
 
   const getInitialOtp = (): string => {
     if (IS_TESTING_ENVIRONMENT && devOtp && typeof devOtp === 'string') {
