@@ -31,12 +31,65 @@
 // };
 
 
-const resolveApiBaseUrl = (): string => {
-  const envUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
-  if (envUrl) {
-    return envUrl.replace(/\/+$/, '');
+/**
+ * Checks if a hostname belongs to a local development environment or loopback.
+ */
+export function isLocalOrLoopbackHost(hostname: string): boolean {
+  const cleanHost = hostname.split(':')[0].toLowerCase();
+  if (
+    cleanHost === 'localhost' ||
+    cleanHost === '127.0.0.1' ||
+    cleanHost === '10.0.2.2' || // Android emulator loopback alias
+    cleanHost.endsWith('.local')
+  ) {
+    return true;
   }
-  return 'https://groceryapi-fvcjdtfpcrera8cd.westus3-01.azurewebsites.net';
+  // RFC 1918 Private IPv4 address checks for local dev LAN
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(cleanHost)) return true;
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(cleanHost)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(cleanHost)) return true;
+  return false;
+}
+
+/**
+ * Enforces HTTPS for all remote network requests.
+ * In production/release builds, plain HTTP is strictly disallowed and automatically upgraded to HTTPS.
+ * In development, plain HTTP is permitted ONLY for local/loopback/private LAN hosts.
+ */
+export function enforceHttpsUrl(
+  rawUrl: string,
+  isDev: boolean = Boolean(typeof __DEV__ !== 'undefined' && __DEV__)
+): string {
+  const trimmed = rawUrl.trim().replace(/\/+$/, '');
+  if (!trimmed) {
+    return 'https://groceryapi-fvcjdtfpcrera8cd.westus3-01.azurewebsites.net';
+  }
+
+  if (trimmed.startsWith('http://')) {
+    try {
+      const parsed = new URL(trimmed);
+      // In production release builds (!isDev), or for remote non-local hosts, upgrade to https://
+      if (!isDev || !isLocalOrLoopbackHost(parsed.hostname)) {
+        return trimmed.replace(/^http:\/\//i, 'https://');
+      }
+    } catch {
+      // If URL parsing fails, default safely to https
+      return trimmed.replace(/^http:\/\//i, 'https://');
+    }
+  }
+
+  // If no scheme was provided (e.g. "groceryapi-fvcjdtfpcrera8cd.westus3-01.azurewebsites.net"), prepend https://
+  if (!trimmed.startsWith('https://') && !trimmed.startsWith('http://')) {
+    return `https://${trimmed}`;
+  }
+
+  return trimmed;
+}
+
+export const resolveApiBaseUrl = (): string => {
+  const envUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
+  const defaultUrl = 'https://groceryapi-fvcjdtfpcrera8cd.westus3-01.azurewebsites.net';
+  return enforceHttpsUrl(envUrl || defaultUrl);
 };
 
 export const API_BASE_URL = resolveApiBaseUrl();

@@ -1,4 +1,4 @@
-import { API_CONFIG } from './config';
+import { API_CONFIG, enforceHttpsUrl } from './config';
 import { storage, STORAGE_KEYS } from '../../utils/storage';
 
 export interface ApiResponse<T = any> {
@@ -30,7 +30,7 @@ export const setOnUnauthorizedCallback = (cb: () => void) => {
 
 export function buildApiUrl(endpoint: string): string {
   if (endpoint.startsWith('http://') || endpoint.startsWith('https://')) {
-    return endpoint;
+    return enforceHttpsUrl(endpoint);
   }
   const baseUrl = API_CONFIG.BASE_URL.replace(/\/+$/, '');
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;

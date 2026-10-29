@@ -26,6 +26,11 @@ Module.prototype.require = function (id: string, ...args: any[]) {
       removeItem: async (key: string) => {
         inMemoryAsyncStorage.delete(key);
       },
+      multiRemove: async (keys: string[]) => {
+        for (const k of keys) {
+          inMemoryAsyncStorage.delete(k);
+        }
+      },
       clear: async () => {
         inMemoryAsyncStorage.clear();
       },

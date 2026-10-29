@@ -10,22 +10,20 @@ import {
 
 /**
  * ============================================================================
- * BACKEND SECURITY / API SCOPING ISSUE:
+ * BACKEND SECURITY & API SCOPING (SEC-1 RESOLVED):
  * ============================================================================
  * The backend endpoints:
  *   - GET /api/CartMaster
  *   - GET /api/CartItemMaster
- * currently return ALL records across all customers and stores.
- * Query parameters such as `?customerId=X` or `?cartId=Y` are ignored by the ASP.NET Core API.
+ * are authoritatively scoped to the authenticated customer identity from JWT claims
+ * at the database query level (SEC-1 fix).
  *
- * CLIENT-SIDE MITIGATION:
- * The mobile app applies strict client-side filtering matching the authenticated
- * `customerId` and active `storeID` as a temporary mitigation ONLY.
+ * Query parameters (?customerId, ?storeId, ?cartId) are supported and validated
+ * against the authenticated customer's ownership on the server side.
  *
- * RECOMMENDED FUTURE BACKEND ARCHITECTURE:
- * 1. Scope CartMaster retrieval to the authenticated customer from JWT claims.
- * 2. Scope CartItemMaster by verifying the Cart belongs to the authenticated customer.
- * 3. Enforce store validation and access control on the server side.
+ * CLIENT-SIDE DEFENSE-IN-DEPTH:
+ * The mobile app continues to apply client-side filtering matching the authenticated
+ * `customerId` and active `storeID` as defense-in-depth and UI data consistency.
  * ============================================================================
  */
 
@@ -220,14 +218,15 @@ export const cartService = {
 
   /**
    * Fetch items for a specific cart ID.
-   * Applies client-side filtering on cartID due to backend scoping limitation.
+   * Passes ?cartId to the backend for server-side scoping and ownership filtering (SEC-1),
+   * and retains client-side filtering for UI safety.
    */
   async getCartItems(cartId: number): Promise<BackendCartItemMaster[]> {
     if (!cartId || isNaN(cartId) || cartId <= 0) {
       return [];
     }
     try {
-      const res = await apiClient.get<any>('/api/CartItemMaster');
+      const res = await apiClient.get<any>(`/api/CartItemMaster?cartId=${cartId}`);
       const allItems: any[] = Array.isArray(res) ? res : res?.result || [];
       return allItems
         .map(normalizeCartItemMaster)

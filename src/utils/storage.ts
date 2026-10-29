@@ -73,6 +73,14 @@ export const secureStorage = {
 export const storage = {
   async get<T>(key: string, defaultValue: T): Promise<T> {
     try {
+      if (key === STORAGE_KEYS.AUTH_TOKEN || key === SECURE_ACCESS_TOKEN_KEY) {
+        const token = await getAuthToken();
+        return (token ?? defaultValue) as T;
+      }
+      if (key === SECURE_REFRESH_TOKEN_KEY) {
+        const token = await getRefreshToken();
+        return (token ?? defaultValue) as T;
+      }
       const jsonValue = await AsyncStorage.getItem(key);
       if (jsonValue !== null) {
         return JSON.parse(jsonValue) as T;
@@ -86,6 +94,13 @@ export const storage = {
 
   async set<T>(key: string, value: T): Promise<boolean> {
     try {
+      if (key === STORAGE_KEYS.AUTH_TOKEN || key === SECURE_ACCESS_TOKEN_KEY || key === SECURE_REFRESH_TOKEN_KEY) {
+        console.warn(`[Storage] Refusing to store sensitive token under plaintext AsyncStorage key "${key}". Routing to secureStorage.`);
+        if (key === SECURE_REFRESH_TOKEN_KEY) {
+          return saveRefreshToken(String(value));
+        }
+        return saveAuthToken(String(value));
+      }
       const jsonValue = JSON.stringify(value);
       await AsyncStorage.setItem(key, jsonValue);
       return true;
@@ -97,6 +112,12 @@ export const storage = {
 
   async remove(key: string): Promise<boolean> {
     try {
+      if (key === STORAGE_KEYS.AUTH_TOKEN || key === SECURE_ACCESS_TOKEN_KEY) {
+        return clearAuthToken();
+      }
+      if (key === SECURE_REFRESH_TOKEN_KEY) {
+        return clearRefreshToken();
+      }
       await AsyncStorage.removeItem(key);
       return true;
     } catch (e) {

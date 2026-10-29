@@ -1,0 +1,3 @@
+D:\Sheik\mblApp\GroceriesUIApp\obj\Debug\net8.0\GroceryApp.Tests.dll
+D:\Sheik\mblApp\GroceriesUIApp\obj\Debug\net8.0\refint\GroceryApp.Tests.dll
+D:\Sheik\mblApp\GroceriesUIApp\obj\Debug\net8.0\GroceryApp.Tests.pdb
